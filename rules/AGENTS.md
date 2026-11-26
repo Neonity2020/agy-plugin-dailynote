@@ -18,3 +18,7 @@
 
 4. **写后透明告知**：
    - 每次通过 MCP 写入或修改笔记成功后，须在回复中明确告知用户：写入的目标日期、最新版本号（`revision`），以及「如不满意可在侧边栏底部/提示条点击一键撤销」。
+
+5. **Composer `@` 引用每日笔记**：
+   - `daily-notes` MCP Server 通过 MCP Resources 暴露 `daily-notes://today`、`daily-notes://yesterday`、`daily-notes://todos/open`、`daily-notes://recent` 以及按日资源 `daily-notes://notes/YYYY-MM-DD`。
+   - 当用户在对话输入框通过 `@` 引用每日笔记资源或提及 `@daily-notes` / `@每日笔记` 时，须优先基于挂载的资源内容（或调用 `read_resource` / `daily_notes_get` 读取最新正文）作答；如需修改被引用笔记，仍须严格遵守前述先读最新 `revision` 与优先增量写入规则。

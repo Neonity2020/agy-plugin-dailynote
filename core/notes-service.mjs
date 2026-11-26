@@ -1444,6 +1444,57 @@ export function createNotesService(dbCtx) {
       };
     },
 
+    listRecentNotes({ limit = 60, offset = 0 } = {}) {
+      const safeLimit = Math.min(200, Math.max(1, Number(limit) || 60));
+      const safeOffset = Math.max(0, Number(offset) || 0);
+      const total = adapter.get(
+        'SELECT COUNT(*) AS cnt FROM notes WHERE length(trim(content_md)) > 0',
+      ).cnt;
+      const rows = adapter.all(
+        `SELECT date, title, word_count, todo_total, todo_done, revision, updated_at
+         FROM notes
+         WHERE length(trim(content_md)) > 0
+         ORDER BY date DESC
+         LIMIT ? OFFSET ?`,
+        safeLimit,
+        safeOffset,
+      );
+
+      const dates = rows.map((r) => r.date);
+      const tagsMap = getTagsBatch(adapter, dates);
+      const projectsMap = getProjectsBatch(adapter, dates);
+
+      return {
+        total,
+        notes: rows.map((r) => ({
+          date: r.date,
+          title: r.title,
+          word_count: r.word_count,
+          todo_total: r.todo_total,
+          todo_done: r.todo_done,
+          revision: r.revision,
+          tags: tagsMap.get(r.date) || [],
+          projects: projectsMap.get(r.date) || [],
+          updated_at: r.updated_at,
+        })),
+      };
+    },
+
+    getResourceListSignature({ limit = 60 } = {}) {
+      const safeLimit = Math.min(200, Math.max(1, Number(limit) || 60));
+      const rows = adapter.all(
+        `SELECT date, title, revision, todo_done, todo_total, updated_at
+         FROM notes
+         WHERE length(trim(content_md)) > 0
+         ORDER BY date DESC
+         LIMIT ?`,
+        safeLimit,
+      );
+      return rows
+        .map((r) => `${r.date}|${r.title}|${r.revision}|${r.todo_done}/${r.todo_total}|${r.updated_at}`)
+        .join('\n');
+    },
+
     saveAttachment(payload) {
       return saveAttachment(dbCtx, payload);
     },

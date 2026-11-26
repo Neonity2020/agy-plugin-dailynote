@@ -216,3 +216,66 @@ test('3-path search (FTS5 >=3 chars, LIKE 1-2 chars, relational filters), calend
     tmp.cleanup();
   }
 });
+
+test('listRecentNotes and getResourceListSignature support dynamic MCP resource enumeration', () => {
+  const tmp = createTempDataDir();
+  try {
+    const dbCtx = openDatabase({ dataDir: tmp.dir });
+    const service = createNotesService(dbCtx);
+
+    const initialList = service.listRecentNotes();
+    assert.equal(initialList.total, 0);
+    assert.deepEqual(initialList.notes, []);
+    const sigEmpty = service.getResourceListSignature();
+    assert.equal(sigEmpty, '');
+
+    // Empty project-only anchor row must be excluded
+    service.linkProject('2026-11-22', {
+      workspace_uri: 'file:///ws/empty',
+      workspace_name: 'empty',
+    });
+    assert.equal(service.listRecentNotes().total, 0);
+    assert.equal(service.getResourceListSignature(), '');
+
+    service.saveNote('2026-11-23', {
+      content_md: '# 十一月廿三\n- [ ] 任务1 #alpha',
+      expected_revision: 0,
+    });
+    service.saveNote('2026-11-25', {
+      content_md: '# 十一月廿五\n- [x] 已完成 #beta',
+      expected_revision: 0,
+    });
+    service.linkProject('2026-11-25', {
+      workspace_uri: 'file:///ws/sidelist',
+      workspace_name: 'sidelist',
+    });
+
+    const listed = service.listRecentNotes();
+    assert.equal(listed.total, 2);
+    assert.deepEqual(
+      listed.notes.map((n) => n.date),
+      ['2026-11-25', '2026-11-23'],
+    );
+    assert.equal(listed.notes[0].title, '十一月廿五');
+    assert.deepEqual(listed.notes[0].tags, ['beta']);
+    assert.equal(listed.notes[0].projects.length, 1);
+    assert.equal(listed.notes[0].projects[0].workspace_name, 'sidelist');
+
+    // Pagination limit & offset
+    const page2 = service.listRecentNotes({ limit: 1, offset: 1 });
+    assert.equal(page2.total, 2);
+    assert.equal(page2.notes.length, 1);
+    assert.equal(page2.notes[0].date, '2026-11-23');
+
+    // Signature stays stable when unchanged, updates after mutation
+    const sig1 = service.getResourceListSignature();
+    assert.equal(service.getResourceListSignature(), sig1);
+    service.appendNote({ date: '2026-11-25', markdown: '新增内容' });
+    const sig2 = service.getResourceListSignature();
+    assert.notEqual(sig2, sig1);
+
+    dbCtx.close();
+  } finally {
+    tmp.cleanup();
+  }
+});

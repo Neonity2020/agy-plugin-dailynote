@@ -17,6 +17,7 @@ interface HeaderProps {
   onAiSummary: () => void;
   onToggleSource: () => void;
   onCopyMarkdown: () => void;
+  onCopyResourceUri: () => void;
   onExportMd: (frontmatter: boolean) => void;
   onOpenRevisions: () => void;
 }
@@ -37,6 +38,7 @@ export function Header({
   onAiSummary,
   onToggleSource,
   onCopyMarkdown,
+  onCopyResourceUri,
   onExportMd,
   onOpenRevisions,
 }: HeaderProps) {
@@ -190,6 +192,17 @@ export function Header({
               }}
             >
               <span>📋 复制今日 Markdown</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="dn-menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                onCopyResourceUri();
+              }}
+            >
+              <span>📎 复制引用 URI (daily-notes://notes/{currentDate})</span>
             </button>
             <button
               type="button"

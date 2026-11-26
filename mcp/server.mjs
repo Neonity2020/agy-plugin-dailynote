@@ -7240,18 +7240,21 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs, exportName) {
+    function addFormats(ajv, list, fs2, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs[f]);
+        ajv.addFormat(f, fs2[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.default = formatsPlugin;
   }
 });
+
+// mcp/src/server.mjs
+import fs from "node:fs";
 
 // node_modules/zod/v3/external.js
 var external_exports = {};
@@ -20541,6 +20544,228 @@ var McpZodTypeKind;
   McpZodTypeKind2["Completable"] = "McpCompletable";
 })(McpZodTypeKind || (McpZodTypeKind = {}));
 
+// node_modules/@modelcontextprotocol/sdk/dist/esm/shared/uriTemplate.js
+var MAX_TEMPLATE_LENGTH = 1e6;
+var MAX_VARIABLE_LENGTH = 1e6;
+var MAX_TEMPLATE_EXPRESSIONS = 1e4;
+var MAX_REGEX_LENGTH = 1e6;
+var UriTemplate = class _UriTemplate {
+  /**
+   * Returns true if the given string contains any URI template expressions.
+   * A template expression is a sequence of characters enclosed in curly braces,
+   * like {foo} or {?bar}.
+   */
+  static isTemplate(str) {
+    return /\{[^}\s]+\}/.test(str);
+  }
+  static validateLength(str, max, context) {
+    if (str.length > max) {
+      throw new Error(`${context} exceeds maximum length of ${max} characters (got ${str.length})`);
+    }
+  }
+  get variableNames() {
+    return this.parts.flatMap((part) => typeof part === "string" ? [] : part.names);
+  }
+  constructor(template) {
+    _UriTemplate.validateLength(template, MAX_TEMPLATE_LENGTH, "Template");
+    this.template = template;
+    this.parts = this.parse(template);
+  }
+  toString() {
+    return this.template;
+  }
+  parse(template) {
+    const parts = [];
+    let currentText = "";
+    let i = 0;
+    let expressionCount = 0;
+    while (i < template.length) {
+      if (template[i] === "{") {
+        if (currentText) {
+          parts.push(currentText);
+          currentText = "";
+        }
+        const end = template.indexOf("}", i);
+        if (end === -1)
+          throw new Error("Unclosed template expression");
+        expressionCount++;
+        if (expressionCount > MAX_TEMPLATE_EXPRESSIONS) {
+          throw new Error(`Template contains too many expressions (max ${MAX_TEMPLATE_EXPRESSIONS})`);
+        }
+        const expr = template.slice(i + 1, end);
+        const operator = this.getOperator(expr);
+        const exploded = expr.includes("*");
+        const names = this.getNames(expr);
+        const name = names[0];
+        for (const name2 of names) {
+          _UriTemplate.validateLength(name2, MAX_VARIABLE_LENGTH, "Variable name");
+        }
+        parts.push({ name, operator, names, exploded });
+        i = end + 1;
+      } else {
+        currentText += template[i];
+        i++;
+      }
+    }
+    if (currentText) {
+      parts.push(currentText);
+    }
+    return parts;
+  }
+  getOperator(expr) {
+    const operators = ["+", "#", ".", "/", "?", "&"];
+    return operators.find((op) => expr.startsWith(op)) || "";
+  }
+  getNames(expr) {
+    const operator = this.getOperator(expr);
+    return expr.slice(operator.length).split(",").map((name) => name.replace("*", "").trim()).filter((name) => name.length > 0);
+  }
+  encodeValue(value, operator) {
+    _UriTemplate.validateLength(value, MAX_VARIABLE_LENGTH, "Variable value");
+    if (operator === "+" || operator === "#") {
+      return encodeURI(value);
+    }
+    return encodeURIComponent(value);
+  }
+  expandPart(part, variables) {
+    if (part.operator === "?" || part.operator === "&") {
+      const pairs = part.names.map((name) => {
+        const value2 = variables[name];
+        if (value2 === void 0)
+          return "";
+        const encoded2 = Array.isArray(value2) ? value2.map((v) => this.encodeValue(v, part.operator)).join(",") : this.encodeValue(value2.toString(), part.operator);
+        return `${name}=${encoded2}`;
+      }).filter((pair) => pair.length > 0);
+      if (pairs.length === 0)
+        return "";
+      const separator = part.operator === "?" ? "?" : "&";
+      return separator + pairs.join("&");
+    }
+    if (part.names.length > 1) {
+      const values2 = part.names.map((name) => variables[name]).filter((v) => v !== void 0);
+      if (values2.length === 0)
+        return "";
+      return values2.map((v) => Array.isArray(v) ? v[0] : v).join(",");
+    }
+    const value = variables[part.name];
+    if (value === void 0)
+      return "";
+    const values = Array.isArray(value) ? value : [value];
+    const encoded = values.map((v) => this.encodeValue(v, part.operator));
+    switch (part.operator) {
+      case "":
+        return encoded.join(",");
+      case "+":
+        return encoded.join(",");
+      case "#":
+        return "#" + encoded.join(",");
+      case ".":
+        return "." + encoded.join(".");
+      case "/":
+        return "/" + encoded.join("/");
+      default:
+        return encoded.join(",");
+    }
+  }
+  expand(variables) {
+    let result = "";
+    let hasQueryParam = false;
+    for (const part of this.parts) {
+      if (typeof part === "string") {
+        result += part;
+        continue;
+      }
+      const expanded = this.expandPart(part, variables);
+      if (!expanded)
+        continue;
+      if ((part.operator === "?" || part.operator === "&") && hasQueryParam) {
+        result += expanded.replace("?", "&");
+      } else {
+        result += expanded;
+      }
+      if (part.operator === "?" || part.operator === "&") {
+        hasQueryParam = true;
+      }
+    }
+    return result;
+  }
+  escapeRegExp(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  partToRegExp(part) {
+    const patterns = [];
+    for (const name2 of part.names) {
+      _UriTemplate.validateLength(name2, MAX_VARIABLE_LENGTH, "Variable name");
+    }
+    if (part.operator === "?" || part.operator === "&") {
+      for (let i = 0; i < part.names.length; i++) {
+        const name2 = part.names[i];
+        const prefix = i === 0 ? "\\" + part.operator : "&";
+        patterns.push({
+          pattern: prefix + this.escapeRegExp(name2) + "=([^&]+)",
+          name: name2
+        });
+      }
+      return patterns;
+    }
+    let pattern;
+    const name = part.name;
+    switch (part.operator) {
+      case "":
+        pattern = part.exploded ? "([^/,]+(?:,[^/,]+)*)" : "([^/,]+)";
+        break;
+      case "+":
+      case "#":
+        pattern = "(.+)";
+        break;
+      case ".":
+        pattern = "\\.([^/,]+)";
+        break;
+      case "/":
+        pattern = "/" + (part.exploded ? "([^/,]+(?:,[^/,]+)*)" : "([^/,]+)");
+        break;
+      default:
+        pattern = "([^/]+)";
+    }
+    patterns.push({ pattern, name });
+    return patterns;
+  }
+  match(uri) {
+    _UriTemplate.validateLength(uri, MAX_TEMPLATE_LENGTH, "URI");
+    let pattern = "^";
+    const names = [];
+    for (const part of this.parts) {
+      if (typeof part === "string") {
+        pattern += this.escapeRegExp(part);
+      } else {
+        const patterns = this.partToRegExp(part);
+        for (const { pattern: partPattern, name } of patterns) {
+          pattern += partPattern;
+          names.push({ name, exploded: part.exploded });
+        }
+      }
+    }
+    pattern += "$";
+    _UriTemplate.validateLength(pattern, MAX_REGEX_LENGTH, "Generated regex pattern");
+    const regex = new RegExp(pattern);
+    const match = uri.match(regex);
+    if (!match)
+      return null;
+    const result = {};
+    for (let i = 0; i < names.length; i++) {
+      const { name, exploded } = names[i];
+      const value = match[i + 1];
+      const cleanName = name.replace("*", "");
+      if (exploded && value.includes(",")) {
+        result[cleanName] = value.split(",");
+      } else {
+        result[cleanName] = value;
+      }
+    }
+    return result;
+  }
+};
+
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
 function validateToolName(name) {
@@ -21379,6 +21604,30 @@ var McpServer = class {
     }
   }
 };
+var ResourceTemplate = class {
+  constructor(uriTemplate, _callbacks) {
+    this._callbacks = _callbacks;
+    this._uriTemplate = typeof uriTemplate === "string" ? new UriTemplate(uriTemplate) : uriTemplate;
+  }
+  /**
+   * Gets the URI template pattern.
+   */
+  get uriTemplate() {
+    return this._uriTemplate;
+  }
+  /**
+   * Gets the list callback, if one was provided.
+   */
+  get listCallback() {
+    return this._callbacks.list;
+  }
+  /**
+   * Gets the callback for completing a specific URI template variable, if one was provided.
+   */
+  completeCallback(variable) {
+    return this._callbacks.complete?.[variable];
+  }
+};
 var EMPTY_OBJECT_JSON_SCHEMA = {
   type: "object",
   properties: {}
@@ -21567,7 +21816,9 @@ import {
   NotesError,
   createNotesService,
   getLocalDateString,
-  openDatabase
+  isValidDateString,
+  openDatabase,
+  shiftDateString
 } from "../core/index.mjs";
 function okResult(payload) {
   return {
@@ -21629,7 +21880,87 @@ function wrapTool(fn) {
     }
   };
 }
-function createDailyNotesMcpServer({ dataDir } = {}) {
+function buildNoteResourceDescription(note) {
+  const parts = [];
+  if (note.word_count) parts.push(`${note.word_count} \u5B57`);
+  if (note.todo_total > 0) parts.push(`\u5F85\u529E ${note.todo_done}/${note.todo_total}`);
+  if (note.tags?.length) parts.push(note.tags.slice(0, 4).map((t) => `#${t}`).join(" "));
+  return parts.length > 0 ? parts.join(" \xB7 ") : "\u6BCF\u65E5\u7B14\u8BB0";
+}
+function formatNoteResourceMarkdown(note) {
+  if (!note.exists || !note.content_md.trim()) {
+    return `# \u6BCF\u65E5\u7B14\u8BB0 ${note.date}
+
+> \u5143\u6570\u636E\uFF1Arevision=0 | \u72B6\u6001=\u6682\u65E0\u5185\u5BB9
+
+\uFF08\u8BE5\u65E5\u671F\u5C1A\u65E0\u6BCF\u65E5\u7B14\u8BB0\u8BB0\u5F55\u3002\uFF09`;
+  }
+  const metaParts = [
+    `revision=${note.revision}`,
+    `\u5B57\u6570=${note.word_count}`,
+    `\u5F85\u529E=${note.todo_done}/${note.todo_total}`
+  ];
+  if (note.tags?.length) {
+    metaParts.push(`\u6807\u7B7E=${note.tags.map((t) => `#${t}`).join(", ")}`);
+  }
+  if (note.projects?.length) {
+    metaParts.push(`\u5173\u8054\u9879\u76EE=${note.projects.map((p) => p.workspace_name).join(", ")}`);
+  }
+  if (note.updated_at) {
+    metaParts.push(`\u66F4\u65B0\u65F6\u95F4=${note.updated_at}`);
+  }
+  return `# \u6BCF\u65E5\u7B14\u8BB0 ${note.date}
+
+> \u5143\u6570\u636E\uFF1A${metaParts.join(" | ")}
+
+${note.content_md}`;
+}
+function formatOpenTodosResourceMarkdown(openRes) {
+  const lines = [
+    `# \u672A\u5B8C\u6210\u5F85\u529E\u6C47\u603B (${openRes.start_date} ~ ${openRes.end_date})`,
+    "",
+    `> \u5171 ${openRes.total_open} \u9879\u672A\u5B8C\u6210\u5F85\u529E`,
+    ""
+  ];
+  if (!openRes.items.length) {
+    lines.push("\uFF08\u6700\u8FD1 7 \u5929\u6CA1\u6709\u672A\u5B8C\u6210\u5F85\u529E\u3002\uFF09");
+    return lines.join("\n");
+  }
+  const grouped = /* @__PURE__ */ new Map();
+  for (const item of openRes.items) {
+    if (!grouped.has(item.date)) {
+      grouped.set(item.date, { revision: item.revision, items: [] });
+    }
+    grouped.get(item.date).items.push(item);
+  }
+  for (const [date3, group] of grouped.entries()) {
+    lines.push(`## ${date3} (rev ${group.revision})`);
+    for (const item of group.items) {
+      lines.push(`- [ ] ${item.text} _(L${item.line_number})_`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+function formatRecentIndexResourceMarkdown(rangeRes) {
+  const lines = [`# \u6700\u8FD1\u6BCF\u65E5\u7B14\u8BB0\u7D22\u5F15 (${rangeRes.start_date} ~ ${rangeRes.end_date})`, ""];
+  if (!rangeRes.notes.length) {
+    lines.push("\uFF08\u6700\u8FD1 14 \u5929\u6682\u65E0\u6BCF\u65E5\u7B14\u8BB0\u8BB0\u5F55\u3002\uFF09");
+    return lines.join("\n");
+  }
+  for (const note of rangeRes.notes) {
+    const titlePart = note.title ? ` \xB7 ${note.title}` : "";
+    const stats = [`${note.word_count} \u5B57`];
+    if (note.todo_total > 0) stats.push(`\u5F85\u529E ${note.todo_done}/${note.todo_total}`);
+    if (note.tags?.length) stats.push(note.tags.slice(0, 4).map((t) => `#${t}`).join(" "));
+    const previewPart = note.preview ? ` \u2014 ${note.preview}` : "";
+    lines.push(
+      `- **${note.date}**${titlePart} (${stats.join(" \xB7 ")}) \u2014 \`daily-notes://notes/${note.date}\`${previewPart}`
+    );
+  }
+  return lines.join("\n");
+}
+function createDailyNotesMcpServer({ dataDir, watchDebounceMs = 400 } = {}) {
   const dbCtx = openDatabase({ dataDir });
   const service = createNotesService(dbCtx);
   const server = new McpServer(
@@ -21641,6 +21972,165 @@ function createDailyNotesMcpServer({ dataDir } = {}) {
       capabilities: {
         tools: {}
       }
+    }
+  );
+  let lastResourceSignature = service.getResourceListSignature();
+  let watcher = null;
+  let watchTimer = null;
+  let closing = false;
+  function notifyResourcesIfChanged() {
+    if (closing) return;
+    const nextSig = service.getResourceListSignature();
+    if (nextSig !== lastResourceSignature) {
+      lastResourceSignature = nextSig;
+      if (server.isConnected()) {
+        server.sendResourceListChanged();
+      }
+    }
+  }
+  server.registerResource(
+    "daily-notes-today",
+    "daily-notes://today",
+    {
+      title: "\u4ECA\u65E5\u7B14\u8BB0 (Today)",
+      description: "\u5B9E\u65F6\u8BFB\u53D6\u672C\u673A\u4ECA\u5929\u7684\u6BCF\u65E5\u7B14\u8BB0\u6B63\u6587\u3001\u6807\u7B7E\u3001\u5173\u8054\u9879\u76EE\u4E0E\u5F85\u529E\u72B6\u6001",
+      mimeType: "text/markdown"
+    },
+    (uri) => {
+      const note = service.getNote(getLocalDateString());
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "text/markdown",
+            text: formatNoteResourceMarkdown(note)
+          }
+        ]
+      };
+    }
+  );
+  server.registerResource(
+    "daily-notes-yesterday",
+    "daily-notes://yesterday",
+    {
+      title: "\u6628\u65E5\u7B14\u8BB0 (Yesterday)",
+      description: "\u5B9E\u65F6\u8BFB\u53D6\u672C\u673A\u6628\u5929\u7684\u6BCF\u65E5\u7B14\u8BB0\u6B63\u6587\u3001\u6807\u7B7E\u3001\u5173\u8054\u9879\u76EE\u4E0E\u5F85\u529E\u72B6\u6001",
+      mimeType: "text/markdown"
+    },
+    (uri) => {
+      const yesterday = shiftDateString(getLocalDateString(), -1);
+      const note = service.getNote(yesterday);
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "text/markdown",
+            text: formatNoteResourceMarkdown(note)
+          }
+        ]
+      };
+    }
+  );
+  server.registerResource(
+    "daily-notes-open-todos",
+    "daily-notes://todos/open",
+    {
+      title: "\u672A\u5B8C\u6210\u5F85\u529E\u6C47\u603B (\u8FD1 7 \u5929)",
+      description: "\u6C47\u603B\u6700\u8FD1 7 \u5929\u6BCF\u65E5\u7B14\u8BB0\u4E2D\u6240\u6709\u5C1A\u672A\u52FE\u9009\u7684\u5F85\u529E\u4E8B\u9879\uFF08\u6309\u65E5\u671F\u5206\u7EC4\uFF0C\u542B\u884C\u53F7\u4E0E revision\uFF09",
+      mimeType: "text/markdown"
+    },
+    (uri) => {
+      const openRes = service.getOpenTodos({ days: 7 });
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "text/markdown",
+            text: formatOpenTodosResourceMarkdown(openRes)
+          }
+        ]
+      };
+    }
+  );
+  server.registerResource(
+    "daily-notes-recent",
+    "daily-notes://recent",
+    {
+      title: "\u6700\u8FD1\u6BCF\u65E5\u7B14\u8BB0\u7D22\u5F15 (\u8FD1 14 \u5929)",
+      description: "\u5217\u51FA\u6700\u8FD1 14 \u5929\u5DF2\u6709\u5185\u5BB9\u7684\u6BCF\u65E5\u7B14\u8BB0\u76EE\u5F55\u6458\u8981\u53CA\u5BF9\u5E94\u8D44\u6E90 URI",
+      mimeType: "text/markdown"
+    },
+    (uri) => {
+      const today = getLocalDateString();
+      const rangeRes = service.listRange({
+        start_date: shiftDateString(today, -13),
+        end_date: today,
+        include_content: false
+      });
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "text/markdown",
+            text: formatRecentIndexResourceMarkdown(rangeRes)
+          }
+        ]
+      };
+    }
+  );
+  const noteByDateTemplate = new ResourceTemplate("daily-notes://notes/{date}", {
+    list: () => {
+      const { notes } = service.listRecentNotes({ limit: 60 });
+      return {
+        resources: notes.map((note) => ({
+          uri: `daily-notes://notes/${note.date}`,
+          name: note.title ? `\u6BCF\u65E5\u7B14\u8BB0 ${note.date} \xB7 ${note.title}` : `\u6BCF\u65E5\u7B14\u8BB0 ${note.date}`,
+          title: note.title ? `${note.date} \xB7 ${note.title}` : `${note.date} \u6BCF\u65E5\u7B14\u8BB0`,
+          description: buildNoteResourceDescription(note),
+          mimeType: "text/markdown"
+        }))
+      };
+    },
+    complete: {
+      date: (value) => {
+        const prefix = String(value || "").trim();
+        const today = getLocalDateString();
+        const yesterday = shiftDateString(today, -1);
+        const recentDates = service.listRecentNotes({ limit: 60 }).notes.map((n) => n.date);
+        const candidates = [.../* @__PURE__ */ new Set([today, yesterday, ...recentDates])].sort(
+          (a, b) => b.localeCompare(a)
+        );
+        return candidates.filter((d) => !prefix || d.startsWith(prefix)).slice(0, 20);
+      }
+    }
+  });
+  server.registerResource(
+    "daily-notes-by-date",
+    noteByDateTemplate,
+    {
+      title: "\u6307\u5B9A\u65E5\u671F\u6BCF\u65E5\u7B14\u8BB0",
+      description: "\u6309\u65E5\u671F YYYY-MM-DD \u8BFB\u53D6\u4EFB\u610F\u4E00\u5929\u7684\u6BCF\u65E5\u7B14\u8BB0\u6B63\u6587\u4E0E\u5143\u6570\u636E",
+      mimeType: "text/markdown"
+    },
+    (uri, variables) => {
+      const rawDate = Array.isArray(variables.date) ? variables.date[0] : variables.date;
+      const date3 = String(rawDate || "").trim();
+      if (!isValidDateString(date3)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `\u65E5\u671F\u683C\u5F0F\u975E\u6CD5: ${date3}\uFF0C\u8981\u6C42\u4E3A\u5408\u6CD5 YYYY-MM-DD`
+        );
+      }
+      const note = service.getNote(date3);
+      return {
+        contents: [
+          {
+            uri: uri.toString(),
+            mimeType: "text/markdown",
+            text: formatNoteResourceMarkdown(note)
+          }
+        ]
+      };
     }
   );
   server.registerTool(
@@ -21757,6 +22247,7 @@ function createDailyNotesMcpServer({ dataDir } = {}) {
         workspace_name,
         summary
       });
+      notifyResourcesIfChanged();
       return {
         ok: true,
         date: result.note.date,
@@ -21792,6 +22283,7 @@ function createDailyNotesMcpServer({ dataDir } = {}) {
         completed,
         editor: "agent"
       });
+      notifyResourcesIfChanged();
       return {
         ok: true,
         date: result.note.date,
@@ -21827,6 +22319,7 @@ function createDailyNotesMcpServer({ dataDir } = {}) {
         markdown,
         summary
       });
+      notifyResourcesIfChanged();
       return {
         ok: true,
         date: result.note.date,
@@ -21838,11 +22331,41 @@ function createDailyNotesMcpServer({ dataDir } = {}) {
       };
     })
   );
+  try {
+    watcher = fs.watch(dbCtx.dataDir, (_eventType, filename) => {
+      if (closing) return;
+      if (filename && !String(filename).startsWith("notes.db")) return;
+      if (watchTimer) clearTimeout(watchTimer);
+      watchTimer = setTimeout(() => {
+        watchTimer = null;
+        try {
+          notifyResourcesIfChanged();
+        } catch {
+        }
+      }, watchDebounceMs);
+      watchTimer.unref?.();
+    });
+    watcher.on("error", () => {
+    });
+    watcher.unref?.();
+  } catch {
+    watcher = null;
+  }
   return {
     server,
     dbCtx,
     service,
     async close() {
+      closing = true;
+      if (watchTimer) {
+        clearTimeout(watchTimer);
+        watchTimer = null;
+      }
+      try {
+        watcher?.close();
+      } catch {
+      }
+      watcher = null;
       await server.close();
       dbCtx.close();
     }

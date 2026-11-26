@@ -5,7 +5,13 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { getLocalDateString, openDatabase } from '../../core/index.mjs';
+import { ResourceListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  createNotesService,
+  getLocalDateString,
+  openDatabase,
+  shiftDateString,
+} from '../../core/index.mjs';
 import { createTempDataDir } from '../core/helpers.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -190,9 +196,162 @@ test('Isolated plugin copy without node_modules boots mcp/server.mjs cleanly', a
     await client.connect(transport);
     const tools = await client.listTools();
     assert.equal(tools.tools.length, 7);
+    const resources = await client.listResources();
+    assert.ok(resources.resources.length >= 4);
     await client.close();
   } finally {
     pluginTmp.cleanup();
     dataTmp.cleanup();
+  }
+});
+
+test('MCP server exposes Daily Notes resources, templates, completion, and live list_changed notifications', async () => {
+  const tmp = createTempDataDir('dn-mcp-res-');
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(rootDir, 'mcp', 'server.mjs')],
+    env: {
+      ...process.env,
+      DAILY_NOTES_DATA_DIR: tmp.dir,
+    },
+    stderr: 'pipe',
+  });
+
+  const client = new Client({ name: 'daily-notes-resource-client', version: '1.0.0' });
+  let listChangedCount = 0;
+  let waiters = [];
+  client.setNotificationHandler(ResourceListChangedNotificationSchema, () => {
+    listChangedCount += 1;
+    const currentWaiters = waiters;
+    waiters = [];
+    for (const resolve of currentWaiters) {
+      resolve(listChangedCount);
+    }
+  });
+
+  function waitForListChanged(previousCount, timeoutMs = 4000) {
+    if (listChangedCount > previousCount) {
+      return Promise.resolve(listChangedCount);
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        waiters = waiters.filter((fn) => fn !== onNotify);
+        reject(new Error(`Timed out waiting for notifications/resources/list_changed (count=${listChangedCount})`));
+      }, timeoutMs);
+      function onNotify(nextCount) {
+        if (nextCount > previousCount) {
+          clearTimeout(timer);
+          resolve(nextCount);
+        } else {
+          waiters.push(onNotify);
+        }
+      }
+      waiters.push(onNotify);
+    });
+  }
+
+  try {
+    await client.connect(transport);
+
+    // 1. Initially lists the 4 fixed shortcut resources
+    const initialRes = await client.listResources();
+    assert.deepEqual(
+      initialRes.resources.map((r) => r.uri),
+      [
+        'daily-notes://today',
+        'daily-notes://yesterday',
+        'daily-notes://todos/open',
+        'daily-notes://recent',
+      ],
+    );
+
+    // 2. Resource template for per-day lookup
+    const templates = await client.listResourceTemplates();
+    assert.deepEqual(
+      templates.resourceTemplates.map((t) => t.uriTemplate),
+      ['daily-notes://notes/{date}'],
+    );
+
+    // 3. Reading today when DB is empty returns clear metadata + empty-state note
+    const emptyToday = await client.readResource({ uri: 'daily-notes://today' });
+    assert.equal(emptyToday.contents[0].mimeType, 'text/markdown');
+    assert.ok(emptyToday.contents[0].text.includes('revision=0'));
+    assert.ok(emptyToday.contents[0].text.includes('暂无内容'));
+
+    const today = getLocalDateString();
+    const yesterday = shiftDateString(today, -1);
+
+    // 4. Write yesterday via MCP tool and verify list_changed fires
+    const beforeMcpWrite = listChangedCount;
+    await client.callTool({
+      name: 'daily_notes_append',
+      arguments: {
+        date: yesterday,
+        heading: '昨日回顾',
+        markdown: '- [ ] 昨天遗留待办 #followup\n- [x] 昨天已完成',
+      },
+    });
+    await waitForListChanged(beforeMcpWrite);
+
+    // 5. Simulate external Sidecar UI write to SQLite and verify fs.watch triggers list_changed
+    const beforeExternalWrite = listChangedCount;
+    const sidecarDb = openDatabase({ dataDir: tmp.dir });
+    try {
+      const sidecarSvc = createNotesService(sidecarDb);
+      sidecarSvc.saveNote(today, {
+        content_md: '# 今日开发记录\n- [ ] 实现 Composer @ 引用 #feat',
+        expected_revision: 0,
+      });
+    } finally {
+      sidecarDb.close();
+    }
+    await waitForListChanged(beforeExternalWrite);
+
+    // 6. Concrete per-day resources now appear in listResources()
+    const populatedRes = await client.listResources();
+    const uris = populatedRes.resources.map((r) => r.uri);
+    assert.ok(uris.includes(`daily-notes://notes/${today}`));
+    assert.ok(uris.includes(`daily-notes://notes/${yesterday}`));
+    const todayEntry = populatedRes.resources.find((r) => r.uri === `daily-notes://notes/${today}`);
+    assert.ok(todayEntry.title.includes(today));
+    assert.ok(todayEntry.description.includes('#feat'));
+
+    // 7. Read all 5 resource flavors
+    const todayContent = (await client.readResource({ uri: 'daily-notes://today' })).contents[0].text;
+    assert.ok(todayContent.includes('今日开发记录'));
+    assert.ok(todayContent.includes('revision=1'));
+
+    const yesterdayContent = (await client.readResource({ uri: 'daily-notes://yesterday' })).contents[0].text;
+    assert.ok(yesterdayContent.includes('昨天遗留待办'));
+
+    const specificContent = (
+      await client.readResource({ uri: `daily-notes://notes/${today}` })
+    ).contents[0].text;
+    assert.ok(specificContent.includes('实现 Composer @ 引用'));
+
+    const openTodosContent = (await client.readResource({ uri: 'daily-notes://todos/open' })).contents[0].text;
+    assert.ok(openTodosContent.includes('实现 Composer @ 引用'));
+    assert.ok(openTodosContent.includes('昨天遗留待办'));
+    assert.ok(!openTodosContent.includes('昨天已完成'));
+
+    const recentContent = (await client.readResource({ uri: 'daily-notes://recent' })).contents[0].text;
+    assert.ok(recentContent.includes(`daily-notes://notes/${today}`));
+    assert.ok(recentContent.includes(`daily-notes://notes/${yesterday}`));
+
+    // 8. Invalid calendar date rejects with MCP error
+    await assert.rejects(
+      () => client.readResource({ uri: 'daily-notes://notes/2026-02-30' }),
+      /日期格式非法|2026-02-30/,
+    );
+
+    // 9. Completion for daily-notes://notes/{date}
+    const completion = await client.complete({
+      ref: { type: 'ref/resource', uri: 'daily-notes://notes/{date}' },
+      argument: { name: 'date', value: today.slice(0, 7) },
+    });
+    assert.ok(completion.completion.values.includes(today));
+  } finally {
+    await client.close();
+    tmp.cleanup();
   }
 });

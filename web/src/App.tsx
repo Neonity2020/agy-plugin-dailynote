@@ -470,6 +470,16 @@ export function App() {
     }
   };
 
+  const handleCopyResourceUri = async () => {
+    const uri = `daily-notes://notes/${currentDateRef.current}`;
+    try {
+      await navigator.clipboard.writeText(uri);
+      showToast(`📎 已复制引用 ${uri}`);
+    } catch {
+      showToast('复制失败：剪贴板不可用');
+    }
+  };
+
   const handleExportMd = async (frontmatter: boolean) => {
     await flushSave(false);
     const date = currentDateRef.current;
@@ -616,6 +626,7 @@ export function App() {
         onAiSummary={() => void handleAiSummary()}
         onToggleSource={() => void handleToggleSource()}
         onCopyMarkdown={() => void handleCopyMarkdown()}
+        onCopyResourceUri={() => void handleCopyResourceUri()}
         onExportMd={(fm) => void handleExportMd(fm)}
         onOpenRevisions={() => {
           setCalendarOpen(false);
