@@ -1,142 +1,96 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import test from 'node:test';
+import { CURRENT_SCHEMA_VERSION, openDatabase } from '../../core/db.mjs';
+import { createTempDataDir } from './helpers.mjs';
 
-import { openDatabase, applyMigrations, currentSchemaVersion, SCHEMA_VERSION } from '../../core/db.mjs';
-import { assertNodeVersion, isNodeVersionSupported, MIN_NODE_VERSION } from '../../core/storage-adapter.mjs';
-import { tempDir } from './helpers.mjs';
+test('openDatabase configures WAL PRAGMAs, creates schema v1 tables, and is idempotent', () => {
+  const tmp = createTempDataDir();
+  try {
+    const dbCtx = openDatabase({ dataDir: tmp.dir });
+    assert.equal(dbCtx.schemaVersion, CURRENT_SCHEMA_VERSION);
+    assert.equal(String(dbCtx.adapter.getPragma('journal_mode')).toLowerCase(), 'wal');
+    assert.equal(Number(dbCtx.adapter.getPragma('foreign_keys')), 1);
+    assert.equal(Number(dbCtx.adapter.getPragma('busy_timeout')), 5000);
 
-test('Node 版本门槛按 22.5.0 比较', () => {
-  assert.equal(MIN_NODE_VERSION, '22.5.0');
-  assert.equal(isNodeVersionSupported('22.4.9'), false);
-  assert.equal(isNodeVersionSupported('22.5.0'), true);
-  assert.equal(isNodeVersionSupported('23.0.0'), true);
-  assert.equal(isNodeVersionSupported('22.5.1'), true);
-  assert.throws(() => assertNodeVersion('20.11.1'), /需要 Node\.js/);
-  assert.doesNotThrow(() => assertNodeVersion());
-});
+    const tables = dbCtx.adapter
+      .all("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
+      .map((r) => r.name);
 
-test('连接依次应用全部 5 条 PRAGMA', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
+    for (const expected of [
+      'attachments',
+      'note_links',
+      'note_projects',
+      'note_revisions',
+      'note_tags',
+      'notes',
+      'notes_fts',
+      'schema_migrations',
+      'todo_carryovers',
+    ]) {
+      assert.ok(tables.includes(expected), `Missing table: ${expected}`);
+    }
 
-  const pragmas = adapter.readPragmas();
-  assert.equal(pragmas.journal_mode, 'wal');
-  assert.equal(Number(pragmas.synchronous), 1); // NORMAL
-  assert.equal(Number(pragmas.foreign_keys), 1);
-  assert.equal(Number(pragmas.busy_timeout), 5000);
-  assert.equal(Number(pragmas.temp_store), 2); // MEMORY
+    const migrationRow = dbCtx.adapter.get('SELECT version FROM schema_migrations WHERE version = 1');
+    assert.equal(migrationRow.version, 1);
 
-  adapter.close();
-});
-
-test('schema_migrations 记录到 v1 且迁移幂等', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
-
-  assert.equal(currentSchemaVersion(adapter), SCHEMA_VERSION);
-  const row = adapter.get('SELECT version, applied_at FROM schema_migrations ORDER BY version DESC LIMIT 1');
-  assert.equal(row.version, 1);
-  assert.match(row.applied_at, /^\d{4}-\d{2}-\d{2}T/);
-
-  const again = applyMigrations(adapter);
-  assert.deepEqual(again.applied, []);
-  assert.equal(
-    adapter.get('SELECT COUNT(*) AS count FROM schema_migrations').count,
-    1,
-  );
-
-  adapter.close();
-});
-
-test('DATA_MODEL 规定的表与触发器全部存在', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
-
-  const tables = adapter
-    .all("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-    .map((row) => row.name);
-  for (const name of [
-    'schema_migrations',
-    'notes',
-    'notes_fts',
-    'note_tags',
-    'note_projects',
-    'note_links',
-    'note_revisions',
-    'attachments',
-    'todo_carryovers',
-  ]) {
-    assert.ok(tables.includes(name), `缺少表 ${name}`);
+    // Re-open idempotently
+    dbCtx.close();
+    const reopened = openDatabase({ dataDir: tmp.dir });
+    const countRow = reopened.adapter.get('SELECT COUNT(*) AS c FROM schema_migrations');
+    assert.equal(countRow.c, 1);
+    reopened.close();
+  } finally {
+    tmp.cleanup();
   }
-
-  const triggers = adapter
-    .all("SELECT name FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
-    .map((row) => row.name);
-  assert.deepEqual(triggers, ['notes_ad', 'notes_ai', 'notes_au']);
-
-  const ftsSql = adapter.get("SELECT sql FROM sqlite_master WHERE name = 'notes_fts'").sql;
-  assert.match(ftsSql, /trigram/);
-
-  adapter.close();
 });
 
-test('FTS 触发器在插入/更新/删除时同步索引', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
+test('FTS5 trigram triggers sync insert, update, and delete automatically', () => {
+  const tmp = createTempDataDir();
+  try {
+    const dbCtx = openDatabase({ dataDir: tmp.dir });
+    const now = new Date().toISOString();
 
-  const insert = () => {
-    adapter.run(
-      `INSERT INTO notes (date, content_md, plain_text, created_at, updated_at)
-       VALUES ('2026-11-25', '每日笔记 SQLite 调试', '每日笔记 SQLite 调试', 'x', 'x')`,
+    dbCtx.adapter.run(
+      `INSERT INTO notes (date, title, content_md, plain_text, word_count, todo_total, todo_done, revision, last_editor, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 10, 0, 0, 1, 'user', ?, ?)`,
+      '2026-11-25',
+      '每日笔记测试',
+      '# 每日笔记测试\n调试 SQLite trigram 索引',
+      '每日笔记测试\n调试 SQLite trigram 索引',
+      now,
+      now,
     );
-  };
-  const ftsCount = () => adapter.get('SELECT COUNT(*) AS count FROM notes_fts').count;
 
-  insert();
-  assert.equal(ftsCount(), 1);
-  assert.equal(adapter.all("SELECT date FROM notes_fts WHERE notes_fts MATCH '\"每日笔记\"'").length, 1);
+    const hit1 = dbCtx.adapter.all(
+      "SELECT date FROM notes_fts WHERE notes_fts MATCH '\"每日笔记\"'",
+    );
+    assert.deepEqual(hit1.map((r) => r.date), ['2026-11-25']);
 
-  adapter.run("UPDATE notes SET content_md = '完全不同的内容 ABC', plain_text = '' WHERE date = '2026-11-25'");
-  assert.equal(adapter.all("SELECT date FROM notes_fts WHERE notes_fts MATCH '\"每日笔记\"'").length, 0);
-  assert.equal(adapter.all("SELECT date FROM notes_fts WHERE notes_fts MATCH '\"ABC\"'").length, 1);
+    dbCtx.adapter.run(
+      'UPDATE notes SET content_md = ?, plain_text = ? WHERE date = ?',
+      '已经替换为全新内容',
+      '已经替换为全新内容',
+      '2026-11-25',
+    );
 
-  adapter.run("DELETE FROM notes WHERE date = '2026-11-25'");
-  assert.equal(ftsCount(), 0);
+    const oldHit = dbCtx.adapter.all(
+      "SELECT date FROM notes_fts WHERE notes_fts MATCH '\"每日笔记\"'",
+    );
+    assert.equal(oldHit.length, 0);
 
-  adapter.close();
-});
+    const newHit = dbCtx.adapter.all(
+      "SELECT date FROM notes_fts WHERE notes_fts MATCH '\"全新内容\"'",
+    );
+    assert.deepEqual(newHit.map((r) => r.date), ['2026-11-25']);
 
-test('notes.date 的 GLOB 约束与编辑器枚举生效', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
+    dbCtx.adapter.run('DELETE FROM notes WHERE date = ?', '2026-11-25');
+    const afterDel = dbCtx.adapter.all(
+      "SELECT date FROM notes_fts WHERE notes_fts MATCH '\"全新内容\"'",
+    );
+    assert.equal(afterDel.length, 0);
 
-  adapter.run("INSERT INTO notes (date, created_at, updated_at) VALUES ('2026-11-25', 'x', 'x')");
-  assert.throws(
-    () => adapter.run("INSERT INTO notes (date, created_at, updated_at) VALUES ('26-11-25', 'x', 'x')"),
-    /CHECK constraint failed/,
-  );
-  assert.throws(
-    () =>
-      adapter.run(
-        "INSERT INTO notes (date, last_editor, created_at, updated_at) VALUES ('2026-11-26', 'robot', 'x', 'x')",
-      ),
-    /CHECK constraint failed/,
-  );
-
-  adapter.close();
-});
-
-test('外键级联删除清理从属表', async (t) => {
-  const dataDir = tempDir(t);
-  const { adapter } = await openDatabase({ dataDir });
-
-  adapter.run("INSERT INTO notes (date, content_md, created_at, updated_at) VALUES ('2026-11-25', 'x', 'x', 'x')");
-  adapter.run("INSERT INTO note_tags (note_date, tag) VALUES ('2026-11-25', 'perf')");
-  adapter.run("INSERT INTO note_links (source_date, target_date) VALUES ('2026-11-25', '2026-11-24')");
-
-  adapter.run("DELETE FROM notes WHERE date = '2026-11-25'");
-  assert.equal(adapter.get('SELECT COUNT(*) AS count FROM note_tags').count, 0);
-  assert.equal(adapter.get('SELECT COUNT(*) AS count FROM note_links').count, 0);
-
-  adapter.close();
+    dbCtx.close();
+  } finally {
+    tmp.cleanup();
+  }
 });

@@ -1,497 +1,478 @@
-/**
- * Markdown 解析与就地改写。
- *
- * 规范来源：docs/DATA_MODEL.md 第 5 节。所有派生数据（plain_text / word_count /
- * todo_total / todo_done / #tag / [[date]] / 附件引用）都在同一写事务内由本模块计算。
- *
- * 约定：除代码块围栏内的内容外，`#tag` 与 `[[YYYY-MM-DD]]` 都会被索引；围栏代码块、
- * 行内代码、URL 锚点与行首标题符号不参与提取。
- */
-
-import { createHash } from 'node:crypto';
-
+import crypto from 'node:crypto';
 import { isValidDateString } from './config.mjs';
 
-const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})(.*)$/;
-const TASK_LINE_RE = /^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\]\s+)(.*)$/;
-const TAG_RE = /(?:^|[\s(（【])#([\p{L}\p{N}_][\p{L}\p{N}_/-]{0,48})/gu;
+const FENCE_OPEN_RE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+const ATX_HEADING_RE = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/;
+const TASK_LINE_RE = /^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])(?:\s+(.*))?$/;
+const TAG_RE = /(?:^|[\s(（【\[])#([\p{L}\p{N}_][\p{L}\p{N}_/-]{0,48})/gu;
 const WIKILINK_RE = /\[\[(\d{4}-\d{2}-\d{2})\]\]/g;
-const ATTACHMENT_REF_RE = /\/api\/attachments\/([a-zA-Z0-9_-]{12,64})/g;
-const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/gu;
-const LATIN_WORD_RE = /[A-Za-z0-9][A-Za-z0-9_'’-]*/g;
+const ATTACHMENT_URL_RE = /\/api\/attachments?\/([a-zA-Z0-9_-]{12,64})|\/api\/attachment\?id=([a-zA-Z0-9_-]{12,64})/g;
+const CJK_CHAR_RE = /[\u4E00-\u9FFF\u3400-\u4DBF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/g;
+const LATIN_WORD_RE = /[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*/g;
 
-/**
- * @param {string} code
- * @param {string} message
- * @returns {Error & { code: string }}
- */
-function mdError(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
+export function normalizeLineEndings(text) {
+  return String(text ?? '').replace(/\r\n?/g, '\n');
+}
+
+export function sha256Hex(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+export function normalizeTodoText(text) {
+  return String(text ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function isClosingFence(line, fenceChar, fenceLen) {
+  const escaped = fenceChar === '`' ? '`' : '~';
+  const re = new RegExp(`^\\s{0,3}${escaped}{${fenceLen},}\\s*$`);
+  return re.test(line);
 }
 
 /**
- * 按围栏代码块切分文档，保留原始行结构。
- *
- * @param {string} content
- * @returns {{ code: boolean, lines: string[] }[]}
+ * Annotate lines with fence state (1-based line numbers).
  */
-export function segmentByFences(content) {
-  const lines = String(content ?? '').split('\n');
-  /** @type {{ code: boolean, lines: string[] }[]} */
-  const segments = [];
-  /** @type {null | string} */
-  let fence = null;
-  let buffer = [];
-  let bufferIsCode = false;
+function parseLinesWithFences(contentMd) {
+  const normalized = normalizeLineEndings(contentMd);
+  const rawLines = normalized.split('\n');
+  let activeFence = null; // { char, len }
 
-  const flush = () => {
-    if (buffer.length === 0) return;
-    segments.push({ code: bufferIsCode, lines: buffer });
-    buffer = [];
-  };
-
-  for (const line of lines) {
-    const opener = FENCE_OPEN_RE.exec(line);
-
-    if (fence === null) {
-      if (opener) {
-        flush();
-        fence = opener[1];
-        bufferIsCode = true;
-        buffer.push(line);
-      } else {
-        if (bufferIsCode) flush();
-        bufferIsCode = false;
-        buffer.push(line);
+  return rawLines.map((line, index) => {
+    const lineNumber = index + 1;
+    if (activeFence) {
+      if (isClosingFence(line, activeFence.char, activeFence.len)) {
+        activeFence = null;
+        return { lineNumber, line, inFence: true, isFenceBoundary: true };
       }
-      continue;
+      return { lineNumber, line, inFence: true, isFenceBoundary: false };
     }
-
-    buffer.push(line);
-    if (
-      opener &&
-      opener[1][0] === fence[0] &&
-      opener[1].length >= fence.length &&
-      opener[2].trim() === ''
-    ) {
-      fence = null;
-      flush();
-      bufferIsCode = false;
+    const openMatch = FENCE_OPEN_RE.exec(line);
+    if (openMatch) {
+      const marker = openMatch[1];
+      // Backtick info strings cannot contain another backtick per CommonMark
+      if (!(marker[0] === '`' && openMatch[2].includes('`'))) {
+        activeFence = { char: marker[0], len: marker.length };
+        return { lineNumber, line, inFence: true, isFenceBoundary: true };
+      }
     }
-  }
-
-  flush();
-  return segments;
+    return { lineNumber, line, inFence: false, isFenceBoundary: false };
+  });
 }
 
-/**
- * 把围栏代码块的行替换为空行（保持行号一一对应）。
- *
- * @param {string} content
- * @returns {string[]}
- */
-export function maskedLines(content) {
-  /** @type {string[]} */
-  const out = [];
-  for (const segment of segmentByFences(content)) {
-    for (let i = 0; i < segment.lines.length; i += 1) out.push(segment.code ? '' : segment.lines[i]);
-  }
-  return out;
+function stripInlineCode(text) {
+  // Replace inline code spans (`...` or ``...``) with spaces so tags/links inside them are ignored
+  return text.replace(/(`+)([\s\S]*?)\1/g, ' ');
 }
 
-/**
- * 去掉行内代码（保留行数）。
- *
- * @param {string} line
- * @returns {string}
- */
-export function stripInlineCode(line) {
-  return String(line ?? '').replace(/`+[^`]*`+/g, ' ');
-}
-
-/**
- * 生成用于检索与字数的纯文本：去掉围栏语法行，保留代码正文，剥离 Markdown 标记。
- *
- * @param {string} content
- * @returns {string}
- */
-export function toPlainText(content) {
-  const kept = [];
-  for (const segment of segmentByFences(content)) {
-    if (!segment.code) {
-      kept.push(...segment.lines);
-      continue;
-    }
-    const body = [...segment.lines];
-    if (body.length > 0 && FENCE_OPEN_RE.test(body[0])) body.shift();
-    const last = body[body.length - 1];
-    if (body.length > 0 && last !== undefined && /^[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/.test(last)) {
-      body.pop();
-    }
-    kept.push(...body);
-  }
-
-  return kept
-    .join('\n')
+function stripMarkdownUrls(text) {
+  return text
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/<((?:https?|mailto):[^>]+)>/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
-    .replace(/(^|[\s(（【])#(?=[\p{L}\p{N}_])/gmu, '$1')
-    .replace(/^[ \t]*>[ \t]?/gm, '')
-    .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, '')
-    .replace(/^\[[ xX]\][ \t]?/gm, '')
-    .replace(/^\s*\|/gm, '')
-    .replace(/\|/g, ' ')
-    .replace(/<[^>\n]+>/g, '')
-    .replace(/[*_~`]+/g, '')
-    .replace(/[ \t]+$/gm, '')
-    .replace(/\n{3,}/g, '\n\n')
+    .replace(/<https?:\/\/[^>]+>/gi, ' ')
+    .replace(/https?:\/\/[^\s)>\]]+/gi, ' ');
+}
+
+function stripMarkdownSyntaxForPlainText(linesWithFences) {
+  const out = [];
+  for (const entry of linesWithFences) {
+    if (entry.isFenceBoundary) continue;
+    let text = entry.line;
+    if (!entry.inFence) {
+      text = text
+        .replace(/^\s{0,3}#{1,6}\s+/, '')
+        .replace(/^\s*(?:[-*+]|\d+\.)\s+\[[ xX]\]\s*/, '')
+        .replace(/^\s*(?:[-*+]|\d+\.)\s+/, '')
+        .replace(/^\s*>\s?/, '')
+        .replace(/^\s{0,3}(?:[-*_]\s*){3,}$/, '')
+        .replace(/^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/, '');
+      text = stripMarkdownUrls(text);
+      text = text
+        .replace(/\|/g, ' ')
+        .replace(/(`+)([^`]*)\1/g, '$2')
+        .replace(/(\*\*|__)(.*?)\1/g, '$2')
+        .replace(/~~(.*?)~~/g, '$1')
+        .replace(/==(.*?)==/g, '$1')
+        .replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1')
+        .replace(/(?<!\w)_([^_\n]+)_(?!\w)/g, '$1')
+        .replace(/\[\[(\d{4}-\d{2}-\d{2})\]\]/g, '$1');
+    }
+    const collapsed = text.replace(/\s+/g, ' ').trim();
+    if (collapsed) out.push(collapsed);
+  }
+  return out.join('\n');
+}
+
+export function countWords(plainText) {
+  if (!plainText) return 0;
+  const cjkMatches = plainText.match(CJK_CHAR_RE) || [];
+  const withoutCjk = plainText.replace(CJK_CHAR_RE, ' ');
+  const latinMatches = withoutCjk.match(LATIN_WORD_RE) || [];
+  return cjkMatches.length + latinMatches.length;
+}
+
+/**
+ * Extract title, plain_text, word_count, todos, tags, links, and attachment_ids from Markdown.
+ */
+export function extractMetadata(contentMd) {
+  const normalized = normalizeLineEndings(contentMd);
+  const lines = parseLinesWithFences(normalized);
+
+  let title = '';
+  const todos = [];
+  const tagSet = new Set();
+  const linkSet = new Set();
+
+  for (const entry of lines) {
+    if (entry.inFence) continue;
+
+    // Title from first ATX heading
+    if (!title) {
+      const hMatch = ATX_HEADING_RE.exec(entry.line);
+      if (hMatch) {
+        title = hMatch[2].trim();
+      }
+    }
+
+    // Todos (outside fenced code blocks)
+    const tMatch = TASK_LINE_RE.exec(entry.line);
+    if (tMatch) {
+      const completed = tMatch[2].toLowerCase() === 'x';
+      const rawText = (tMatch[4] ?? '').trim();
+      if (rawText.length > 0) {
+        const normText = normalizeTodoText(rawText);
+        todos.push({
+          lineNumber: entry.lineNumber,
+          completed,
+          text: rawText,
+          normalizedText: normText,
+          hash: sha256Hex(normText),
+        });
+      }
+    }
+
+    // Strip inline code and URLs before tag/wikilink extraction
+    const withoutCode = stripInlineCode(entry.line);
+
+    // Date wikilinks [[YYYY-MM-DD]]
+    for (const match of withoutCode.matchAll(WIKILINK_RE)) {
+      const dateStr = match[1];
+      if (isValidDateString(dateStr)) {
+        linkSet.add(dateStr);
+      }
+    }
+
+    // Inline #tags (exclude heading hashes and URL anchors)
+    const lineForTags = stripMarkdownUrls(withoutCode).replace(/^\s{0,3}#{1,6}\s+/, '');
+    for (const match of lineForTags.matchAll(TAG_RE)) {
+      const cleanTag = match[1].replace(/[-/]+$/, '').toLowerCase();
+      if (cleanTag) {
+        tagSet.add(cleanTag);
+      }
+    }
+  }
+
+  const plain_text = stripMarkdownSyntaxForPlainText(lines);
+  if (!title && plain_text) {
+    const firstLine = plain_text.split('\n')[0].trim();
+    title = firstLine.length > 80 ? `${firstLine.slice(0, 79)}…` : firstLine;
+  }
+
+  const attachmentSet = new Set();
+  for (const match of normalized.matchAll(ATTACHMENT_URL_RE)) {
+    const id = match[1] || match[2];
+    if (id) attachmentSet.add(id);
+  }
+
+  const todo_total = todos.length;
+  const todo_done = todos.filter((t) => t.completed).length;
+
+  return {
+    title,
+    plain_text,
+    word_count: countWords(plain_text),
+    todo_total,
+    todo_done,
+    todos,
+    tags: [...tagSet],
+    links: [...linkSet],
+    attachment_ids: [...attachmentSet],
+  };
+}
+
+function normalizeHeadingText(raw) {
+  return String(raw ?? '')
+    .trim()
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/\s+#*\s*$/, '')
     .trim();
 }
 
-/**
- * @param {string} text
- * @returns {number} 中文按字、英文按词
- */
-export function countWords(text) {
-  const cjk = text.match(CJK_RE)?.length ?? 0;
-  const latin = text.match(LATIN_WORD_RE)?.length ?? 0;
-  return cjk + latin;
-}
-
-/**
- * @param {string} tag
- * @returns {string}
- */
-export function normalizeTag(tag) {
-  return String(tag ?? '')
-    .toLowerCase()
-    .replace(/[-/]+$/, '');
-}
-
-/**
- * 提取正文标签（排除代码块、行内代码、URL 锚点与标题符号）。
- *
- * @param {string} content
- * @returns {string[]} 小写去重
- */
-export function extractTags(content) {
-  const tags = new Set();
-  for (const rawLine of maskedLines(content)) {
-    const line = stripInlineCode(rawLine)
-      .replace(/\]\([^)\s]*\)/g, ']')
-      .replace(/https?:\/\/\S+/g, ' ')
-      .replace(/^[ \t]{0,3}#{1,6}[ \t]+/, '');
-    for (const match of line.matchAll(TAG_RE)) {
-      const tag = normalizeTag(match[1]);
-      if (tag) tags.add(tag);
-    }
-  }
-  return [...tags].sort();
-}
-
-/**
- * 提取合法日期的 [[YYYY-MM-DD]] 双链。
- *
- * @param {string} content
- * @returns {string[]} 去重升序
- */
-export function extractDateLinks(content) {
-  const links = new Set();
-  for (const rawLine of maskedLines(content)) {
-    const line = stripInlineCode(rawLine);
-    for (const match of line.matchAll(WIKILINK_RE)) {
-      if (isValidDateString(match[1])) links.add(match[1]);
-    }
-  }
-  return [...links].sort();
-}
-
-/**
- * 提取正文中的 /api/attachments/<id> 引用。
- *
- * @param {string} content
- * @returns {string[]} 去重
- */
-export function extractAttachmentIds(content) {
-  const ids = new Set();
-  for (const match of String(content ?? '').matchAll(ATTACHMENT_REF_RE)) ids.add(match[1]);
-  return [...ids];
-}
-
-/**
- * 提取未完成待办（行号为 1 基，跳过围栏代码块）。
- *
- * @param {string} content
- * @returns {{ line_number: number, text: string }[]}
- */
-export function extractOpenTodos(content) {
-  const out = [];
-  const lines = maskedLines(content);
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = TASK_LINE_RE.exec(lines[index]);
-    if (!match) continue;
-    if (match[2].toLowerCase() === 'x') continue;
-    out.push({ line_number: index + 1, text: match[4].trim() });
-  }
-  return out;
-}
-
-/**
- * 解析写入所需的全部派生数据。
- *
- * @param {string} content
- * @returns {{
- *   plain_text: string,
- *   word_count: number,
- *   todo_total: number,
- *   todo_done: number,
- *   open_todos: { line_number: number, text: string }[],
- *   tags: string[],
- *   links: string[],
- *   attachment_ids: string[],
- * }}
- */
-export function parseMarkdownMeta(content) {
-  const source = String(content ?? '');
-  const lines = maskedLines(source);
-  let todoTotal = 0;
-  let todoDone = 0;
-  const openTodos = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = TASK_LINE_RE.exec(lines[index]);
-    if (!match) continue;
-    todoTotal += 1;
-    if (match[2].toLowerCase() === 'x') todoDone += 1;
-    else openTodos.push({ line_number: index + 1, text: match[4].trim() });
-  }
-
-  const plainText = toPlainText(source);
-
-  return {
-    plain_text: plainText,
-    word_count: countWords(plainText),
-    todo_total: todoTotal,
-    todo_done: todoDone,
-    open_todos: openTodos,
-    tags: extractTags(source),
-    links: extractDateLinks(source),
-    attachment_ids: extractAttachmentIds(source),
-  };
-}
-
-/**
- * 待办归一化哈希（空白归一化后 sha256）。
- *
- * @param {string} text
- * @returns {string}
- */
-export function normalizeTodoHash(text) {
-  const normalized = String(text ?? '')
-    .replace(/\r\n?/g, '\n')
-    .replace(/^\s*(?:[-*+]|\d+\.)\s+/, '')
-    .replace(/\[[ xX]\]\s*/, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-  return createHash('sha256').update(normalized, 'utf8').digest('hex');
-}
-
-/**
- * 追加到文档末尾。
- *
- * @param {string} content
- * @param {string} markdown
- * @returns {string}
- */
-export function appendMarkdown(content, markdown) {
-  const base = String(content ?? '').replace(/\s+$/, '');
-  const addition = String(markdown ?? '').trim();
-  if (!addition) return base;
-  if (!base) return addition;
-  return `${base}\n\n${addition}`;
-}
-
-/**
- * 找到标题小节的范围（跳过围栏代码块内的伪标题）。
- *
- * @param {string[]} lines
- * @param {string} heading
- * @returns {{ index: number, level: number, end: number } | null}
- */
-function findSection(lines, heading) {
-  const target = String(heading ?? '').trim().toLowerCase();
+function findHeadingSectionRange(lines, targetHeading) {
+  const target = normalizeHeadingText(targetHeading).toLowerCase();
   if (!target) return null;
 
-  const headingAt = (index) => {
-    const match = /^(#{1,6})[ \t]+(.*)$/.exec(lines[index]);
-    return match ? { level: match[1].length, text: match[2].trim().toLowerCase() } : null;
-  };
+  for (let i = 0; i < lines.length; i++) {
+    const entry = lines[i];
+    if (entry.inFence) continue;
+    const hMatch = ATX_HEADING_RE.exec(entry.line);
+    if (!hMatch) continue;
+    const level = hMatch[1].length;
+    const headingTitle = normalizeHeadingText(hMatch[2]).toLowerCase();
+    if (headingTitle !== target) continue;
 
-  const masked = maskedLines(lines.join('\n'));
-  const isCode = (index) => masked[index] === '' && lines[index] !== '';
-
-  for (let index = 0; index < lines.length; index += 1) {
-    if (isCode(index)) continue;
-    const found = headingAt(index);
-    if (!found || found.text !== target) continue;
-
-    let end = lines.length;
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      if (isCode(cursor)) continue;
-      const next = headingAt(cursor);
-      if (next && next.level <= found.level) {
-        end = cursor;
+    // Find next heading of level <= current level outside fences
+    let endIdx = lines.length;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].inFence) continue;
+      const nextH = ATX_HEADING_RE.exec(lines[j].line);
+      if (nextH && nextH[1].length <= level) {
+        endIdx = j;
         break;
       }
     }
-    return { index, level: found.level, end };
+    return { headingIdx: i, level, endIdx };
   }
   return null;
 }
 
 /**
- * 向指定小节末尾追加；小节不存在时在文末新建。
- *
- * @param {string} content
- * @param {string} heading
- * @param {string} markdown
- * @returns {string}
+ * Append Markdown safely either to the end of the document or under a specific heading.
  */
-export function appendToSectionInMarkdown(content, heading, markdown) {
-  const addition = String(markdown ?? '').trim();
-  const base = String(content ?? '');
-  if (!addition) return base.replace(/\s+$/, '');
+export function appendMarkdown(existingMd, newMd, heading) {
+  const existingNorm = normalizeLineEndings(existingMd).trimEnd();
+  const addition = normalizeLineEndings(newMd).trim();
+  if (!addition) return existingNorm;
 
-  const lines = base.split('\n');
-  const section = findSection(lines, heading);
-  if (!section) {
-    return appendMarkdown(base, `## ${String(heading).trim()}\n\n${addition}`);
+  if (!heading || !heading.trim()) {
+    return existingNorm ? `${existingNorm}\n\n${addition}` : addition;
   }
 
-  const before = lines.slice(0, section.end).join('\n').replace(/\s+$/, '');
-  const after = lines.slice(section.end).join('\n').replace(/^\s+/, '');
-  const merged = `${before}\n\n${addition}`;
-  return after ? `${merged}\n\n${after}` : merged;
+  const cleanHeading = normalizeHeadingText(heading);
+  if (!existingNorm) {
+    return `## ${cleanHeading}\n\n${addition}`;
+  }
+
+  const lines = parseLinesWithFences(existingNorm);
+  const range = findHeadingSectionRange(lines, cleanHeading);
+  if (!range) {
+    return `${existingNorm}\n\n## ${cleanHeading}\n\n${addition}`;
+  }
+
+  const rawLines = existingNorm.split('\n');
+  let insertAt = range.endIdx;
+  while (insertAt > range.headingIdx + 1 && rawLines[insertAt - 1].trim() === '') {
+    insertAt -= 1;
+  }
+
+  const before = rawLines.slice(0, insertAt);
+  const after = rawLines.slice(range.endIdx);
+
+  const chunks = [];
+  if (before.length) chunks.push(before.join('\n').trimEnd());
+  chunks.push(addition);
+  if (after.length) chunks.push(after.join('\n').replace(/^\n+/, ''));
+
+  return chunks.filter(Boolean).join('\n\n').trimEnd();
 }
 
 /**
- * 用新内容替换标题小节正文；小节不存在时在文末新建。
- *
- * @param {string} content
- * @param {string} heading
- * @param {string} markdown
- * @returns {{ content_md: string, created: boolean }}
+ * Replace the body under a specific heading while preserving the heading line itself.
  */
-export function replaceSectionInMarkdown(content, heading, markdown) {
-  const title = String(heading ?? '').trim();
-  if (!title) throw mdError('HEADING_REQUIRED', 'replace_section 需要提供 heading');
-
-  const base = String(content ?? '');
-  const lines = base.split('\n');
-  const section = findSection(lines, title);
-  const body = String(markdown ?? '').trim();
-
-  if (!section) {
-    return { content_md: appendMarkdown(base, `## ${title}\n\n${body}`), created: true };
+export function replaceSectionMarkdown(existingMd, heading, newMd) {
+  const existingNorm = normalizeLineEndings(existingMd);
+  const lines = parseLinesWithFences(existingNorm);
+  const range = findHeadingSectionRange(lines, heading);
+  if (!range) {
+    return { found: false, content_md: existingNorm };
   }
 
-  const head = lines.slice(0, section.index + 1).join('\n');
-  const tail = lines.slice(section.end).join('\n').replace(/^\s+/, '');
-  const merged = body ? `${head}\n\n${body}` : head;
-  return { content_md: tail ? `${merged}\n\n${tail}` : merged, created: false };
-}
+  const rawLines = existingNorm.split('\n');
+  const headingLine = rawLines[range.headingIdx];
+  const before = rawLines.slice(0, range.headingIdx);
+  const after = rawLines.slice(range.endIdx);
+  const replacement = normalizeLineEndings(newMd).trim();
 
-/**
- * 切换任务行完成态。
- *
- * @param {string} content
- * @param {{ line_number?: number, match_text?: string, completed: boolean }} options
- * @returns {{ content_md: string, line_number: number, text: string }}
- */
-export function toggleTodoInMarkdown(content, options) {
-  const lines = String(content ?? '').split('\n');
-  const masked = maskedLines(content);
-  const wanted = options.completed ? 'x' : ' ';
-  const needle = String(options.match_text ?? '').trim();
-
-  /** @param {number} index */
-  const matchesNeedle = (index) => {
-    const match = TASK_LINE_RE.exec(masked[index]);
-    return Boolean(match) && match[4].includes(needle);
-  };
-
-  let target = -1;
-  const requested = Number(options.line_number);
-  if (Number.isInteger(requested) && requested >= 1 && requested <= lines.length) {
-    const index = requested - 1;
-    if (TASK_LINE_RE.test(masked[index]) && (!needle || matchesNeedle(index))) target = index;
-  }
-  if (target === -1 && needle) {
-    for (let index = 0; index < masked.length; index += 1) {
-      if (matchesNeedle(index)) {
-        target = index;
-        break;
-      }
-    }
-  }
-  if (target === -1) {
-    const scope = needle ? `匹配「${needle}」` : `第 ${options.line_number} 行`;
-    throw mdError('TODO_NOT_FOUND', `未找到${scope}的待办行`);
-  }
-
-  const match = TASK_LINE_RE.exec(lines[target]);
-  const text = match[4].trim();
-  lines[target] = `${match[1]}${wanted}${match[3]}${match[4]}`;
-
-  return { content_md: lines.join('\n'), line_number: target + 1, text };
-}
-
-/**
- * 单日 Markdown 导出（GFM，可选 frontmatter）。
- *
- * @param {{
- *   date: string,
- *   content_md?: string,
- *   revision?: number,
- *   created_at?: string | null,
- *   updated_at?: string | null,
- *   tags?: string[],
- *   projects?: { workspace_uri: string, workspace_name: string }[],
- *   frontmatter?: boolean,
- * }} note
- * @returns {string}
- */
-export function formatSingleDayExport(note) {
-  const body = String(note.content_md ?? '').replace(/\s+$/, '');
-  const lines = [];
-
-  if (note.frontmatter) {
-    const tags = (note.tags ?? []).map((tag) => JSON.stringify(tag)).join(', ');
-    lines.push('---', `date: ${note.date}`, `revision: ${Number(note.revision ?? 0)}`);
-    if (note.created_at) lines.push(`created_at: ${note.created_at}`);
-    if (note.updated_at) lines.push(`updated_at: ${note.updated_at}`);
-    lines.push(`tags: [${tags}]`);
-    if (note.projects?.length) {
-      lines.push('projects:');
-      for (const project of note.projects) {
-        lines.push(`  - ${JSON.stringify(project.workspace_name)} (${project.workspace_uri})`);
-      }
-    }
-    lines.push('---', '');
-  }
-
-  const heading = `# ${note.date}`;
-  if (body.startsWith('# ') && body.split('\n')[0].trim() === heading) {
-    lines.push(body);
+  const parts = [];
+  if (before.length) parts.push(before.join('\n').trimEnd());
+  if (replacement) {
+    parts.push(`${headingLine}\n\n${replacement}`);
   } else {
-    lines.push(heading, '', body);
+    parts.push(headingLine);
+  }
+  if (after.length) parts.push(after.join('\n').replace(/^\n+/, ''));
+
+  return {
+    found: true,
+    content_md: parts.filter((p) => p !== '').join('\n\n').trimEnd(),
+  };
+}
+
+/**
+ * Toggle a single task item line by 1-based lineNumber or matchText.
+ */
+export function toggleTodoLine(contentMd, { lineNumber, matchText, completed }) {
+  const normalized = normalizeLineEndings(contentMd);
+  const lines = parseLinesWithFences(normalized);
+  const rawLines = normalized.split('\n');
+
+  const todos = [];
+  for (const entry of lines) {
+    if (entry.inFence) continue;
+    const match = TASK_LINE_RE.exec(entry.line);
+    if (!match) continue;
+    const text = (match[4] ?? '').trim();
+    todos.push({
+      lineNumber: entry.lineNumber,
+      prefix: match[1],
+      currentMark: match[2],
+      suffix: match[3],
+      text,
+      completed: match[2].toLowerCase() === 'x',
+    });
   }
 
-  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+  let target = null;
+  if (lineNumber != null) {
+    target = todos.find((t) => t.lineNumber === lineNumber) || null;
+    if (!target) {
+      return { ok: false, errorCode: 'TODO_NOT_FOUND', message: `第 ${lineNumber} 行不是有效的任务项` };
+    }
+  } else if (typeof matchText === 'string' && matchText.trim()) {
+    const needle = matchText.trim().toLowerCase();
+    const exact = todos.filter((t) => t.text.toLowerCase() === needle);
+    const candidates = exact.length > 0
+      ? exact
+      : todos.filter((t) => t.text.toLowerCase().includes(needle));
+    if (candidates.length === 0) {
+      return { ok: false, errorCode: 'TODO_NOT_FOUND', message: `未找到匹配 "${matchText}" 的任务项` };
+    }
+    if (candidates.length > 1) {
+      return {
+        ok: false,
+        errorCode: 'AMBIGUOUS_TODO_MATCH',
+        message: `匹配到 ${candidates.length} 条任务项，请指定 line_number 精确选择`,
+        candidates: candidates.map((c) => ({ line_number: c.lineNumber, text: c.text, completed: c.completed })),
+      };
+    }
+    target = candidates[0];
+  } else {
+    return { ok: false, errorCode: 'INVALID_INPUT', message: '必须提供 line_number 或 match_text' };
+  }
+
+  const nextCompleted = Boolean(completed);
+  const changed = target.completed !== nextCompleted;
+  const markChar = nextCompleted ? 'x' : ' ';
+  const tail = target.text ? ` ${target.text}` : '';
+  rawLines[target.lineNumber - 1] = `${target.prefix}${markChar}${target.suffix}${tail}`;
+
+  return {
+    ok: true,
+    changed,
+    content_md: rawLines.join('\n'),
+    line_number: target.lineNumber,
+    text: target.text,
+    completed: nextCompleted,
+  };
+}
+
+/**
+ * Prepend or append carried-over tasks into today's note under "## 待办顺延 (来自 YYYY-MM-DD)".
+ */
+export function buildCarryOverSection(existingMd, sourceDate, items) {
+  const heading = `待办顺延 (来自 ${sourceDate})`;
+  const taskLines = items.map((item) => `- [ ] ${item.text}`).join('\n');
+  const existingNorm = normalizeLineEndings(existingMd).trim();
+  if (!existingNorm) {
+    return `## ${heading}\n\n${taskLines}`;
+  }
+  const lines = parseLinesWithFences(existingNorm);
+  if (findHeadingSectionRange(lines, heading)) {
+    return appendMarkdown(existingNorm, taskLines, heading);
+  }
+  return `## ${heading}\n\n${taskLines}\n\n${existingNorm}`;
+}
+
+export function escapeLike(str) {
+  return String(str ?? '').replace(/[\\%_]/g, '\\$&');
+}
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Generate an HTML-safe snippet with <mark> highlights for 1-2 character LIKE fallback searches.
+ */
+export function buildShortSnippet(plainText, query, radius = 48) {
+  const text = String(plainText ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const needle = String(query ?? '').trim();
+  if (!needle) {
+    const truncated = text.length > radius * 2 ? `${text.slice(0, radius * 2)}…` : text;
+    return escapeHtml(truncated);
+  }
+
+  const lowerText = text.toLowerCase();
+  const lowerNeedle = needle.toLowerCase();
+  const hitIndex = lowerText.indexOf(lowerNeedle);
+  if (hitIndex < 0) {
+    const truncated = text.length > radius * 2 ? `${text.slice(0, radius * 2)}…` : text;
+    return escapeHtml(truncated);
+  }
+
+  const start = Math.max(0, hitIndex - radius);
+  const end = Math.min(text.length, hitIndex + needle.length + radius);
+  const slice = text.slice(start, end);
+
+  let html = start > 0 ? '...' : '';
+  let cursor = 0;
+  const sliceLower = slice.toLowerCase();
+  while (cursor < slice.length) {
+    const pos = sliceLower.indexOf(lowerNeedle, cursor);
+    if (pos < 0) {
+      html += escapeHtml(slice.slice(cursor));
+      break;
+    }
+    if (pos > cursor) {
+      html += escapeHtml(slice.slice(cursor, pos));
+    }
+    html += `<mark>${escapeHtml(slice.slice(pos, pos + needle.length))}</mark>`;
+    cursor = pos + needle.length;
+  }
+  if (end < text.length) html += '...';
+  return html;
+}
+
+/**
+ * Format note content as a single-day GFM export file, optionally with YAML frontmatter.
+ */
+export function formatExportMarkdown(note, { frontmatter = false } = {}) {
+  const body = normalizeLineEndings(note.content_md || '').trimEnd();
+  if (!frontmatter) {
+    return body ? `${body}\n` : '';
+  }
+
+  const tagsYaml = note.tags?.length
+    ? `[${note.tags.map((t) => JSON.stringify(t)).join(', ')}]`
+    : '[]';
+  const projectsYaml = note.projects?.length
+    ? `[${note.projects.map((p) => JSON.stringify(p.workspace_name || p.workspace_uri)).join(', ')}]`
+    : '[]';
+
+  const header = [
+    '---',
+    `date: ${note.date}`,
+    `revision: ${note.revision ?? 0}`,
+    `tags: ${tagsYaml}`,
+    `projects: ${projectsYaml}`,
+    `updated_at: ${JSON.stringify(note.updated_at || '')}`,
+    '---',
+    '',
+  ].join('\n');
+
+  return body ? `${header}${body}\n` : header;
 }

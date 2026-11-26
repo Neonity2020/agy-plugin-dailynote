@@ -1,25 +1,16 @@
-/**
- * Schema 迁移与数据库打开入口。
- *
- * DDL 逐字对齐 docs/DATA_MODEL.md 第 3 节（v1）。迁移过程本身也在写事务中执行，
- * 保证多进程首次打开时不会留下半张表。
- */
+import fs from 'node:fs';
+import path from 'node:path';
+import { nowIso, resolveDataDir } from './config.mjs';
+import { StorageAdapter } from './storage-adapter.mjs';
 
-import { mkdirSync } from 'node:fs';
+export const CURRENT_SCHEMA_VERSION = 1;
 
-import { ensureDataDir, dbPathFor } from './config.mjs';
-import { createAdapter } from './storage-adapter.mjs';
-
-export const SCHEMA_VERSION = 1;
-
-const V1_DDL = `
--- 1. Schema 版本迁移记录
+const SCHEMA_V1_SQL = `
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
 
--- 2. 每日笔记主表（按本地自然日唯一）
 CREATE TABLE IF NOT EXISTS notes (
   date TEXT PRIMARY KEY CHECK (date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
   title TEXT NOT NULL DEFAULT '',
@@ -39,7 +30,6 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at DESC);
 
--- 3. 中文 + 英文全文检索虚拟表（FTS5 trigram + 触发器自动同步）
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
   date UNINDEXED,
   content_md,
@@ -66,7 +56,6 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE OF content_md, plain_text ON 
   VALUES (new.rowid, new.date, new.content_md, new.plain_text);
 END;
 
--- 4. 正文 #标签 索引表
 CREATE TABLE IF NOT EXISTS note_tags (
   note_date TEXT NOT NULL REFERENCES notes(date) ON DELETE CASCADE,
   tag TEXT NOT NULL,
@@ -75,7 +64,6 @@ CREATE TABLE IF NOT EXISTS note_tags (
 
 CREATE INDEX IF NOT EXISTS idx_note_tags_tag_date ON note_tags(tag, note_date DESC);
 
--- 5. 可选工作区项目关联表
 CREATE TABLE IF NOT EXISTS note_projects (
   note_date TEXT NOT NULL REFERENCES notes(date) ON DELETE CASCADE,
   workspace_uri TEXT NOT NULL,
@@ -87,7 +75,6 @@ CREATE TABLE IF NOT EXISTS note_projects (
 
 CREATE INDEX IF NOT EXISTS idx_note_projects_ws_date ON note_projects(workspace_uri, note_date DESC);
 
--- 6. 日期双链 [[YYYY-MM-DD]] 索引表
 CREATE TABLE IF NOT EXISTS note_links (
   source_date TEXT NOT NULL REFERENCES notes(date) ON DELETE CASCADE,
   target_date TEXT NOT NULL CHECK (target_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
@@ -96,7 +83,6 @@ CREATE TABLE IF NOT EXISTS note_links (
 
 CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_date, source_date DESC);
 
--- 7. 历史快照表（AI 写入前 / 回滚前自动备份）
 CREATE TABLE IF NOT EXISTS note_revisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   note_date TEXT NOT NULL REFERENCES notes(date) ON DELETE CASCADE,
@@ -109,7 +95,6 @@ CREATE TABLE IF NOT EXISTS note_revisions (
 
 CREATE INDEX IF NOT EXISTS idx_note_revisions_date_rev ON note_revisions(note_date, revision DESC, id DESC);
 
--- 8. 本地图片附件元信息表
 CREATE TABLE IF NOT EXISTS attachments (
   id TEXT PRIMARY KEY,
   note_date TEXT REFERENCES notes(date) ON DELETE SET NULL,
@@ -125,7 +110,6 @@ CREATE TABLE IF NOT EXISTS attachments (
 CREATE INDEX IF NOT EXISTS idx_attachments_note_date ON attachments(note_date);
 CREATE INDEX IF NOT EXISTS idx_attachments_orphaned_at ON attachments(orphaned_at);
 
--- 9. 昨日待办顺延幂等去重表
 CREATE TABLE IF NOT EXISTS todo_carryovers (
   target_date TEXT NOT NULL REFERENCES notes(date) ON DELETE CASCADE,
   source_date TEXT NOT NULL CHECK (source_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
@@ -135,79 +119,50 @@ CREATE TABLE IF NOT EXISTS todo_carryovers (
 );
 `;
 
-/**
- * @typedef {{ version: number, ddl: string }} Migration
- * @type {readonly Migration[]}
- */
-export const MIGRATIONS = Object.freeze([{ version: 1, ddl: V1_DDL }]);
-
-/**
- * @param {import('./storage-adapter.mjs').StorageAdapter} adapter
- * @returns {{ from: number, to: number }}
- */
-export function currentSchemaVersion(adapter) {
-  const table = adapter.get(
-    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
-  );
-  if (!table) return 0;
-  const row = adapter.get('SELECT MAX(version) AS version FROM schema_migrations');
-  return Number(row?.version ?? 0);
-}
-
-/**
- * 幂等地把库升级到最新版本。
- *
- * @param {import('./storage-adapter.mjs').StorageAdapter} adapter
- * @param {{ now?: () => Date }} [options]
- * @returns {{ from: number, to: number, applied: number[] }}
- */
-export function applyMigrations(adapter, options = {}) {
-  const now = options.now ?? (() => new Date());
-  const from = currentSchemaVersion(adapter);
-  const applied = [];
-
-  for (const migration of MIGRATIONS) {
-    if (migration.version <= from) continue;
-
-    adapter.transaction(() => {
-      const ftsExists = adapter.get(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'",
+export function runMigrations(adapter) {
+  adapter.transaction(() => {
+    adapter.exec(SCHEMA_V1_SQL);
+    const existing = adapter.get(
+      'SELECT version FROM schema_migrations WHERE version = ?',
+      CURRENT_SCHEMA_VERSION,
+    );
+    if (!existing) {
+      adapter.run(
+        'INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)',
+        CURRENT_SCHEMA_VERSION,
+        nowIso(),
       );
-      adapter.exec(migration.ddl);
-      if (!ftsExists) {
-        // 外部内容 FTS：首次建表后重建一次，防止对已有 notes 行漏索引
-        adapter.exec("INSERT INTO notes_fts(notes_fts) VALUES('rebuild')");
-      }
-      adapter.run('INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)', [
-        migration.version,
-        now().toISOString(),
-      ]);
-    });
-
-    applied.push(migration.version);
-  }
-
-  return { from, to: currentSchemaVersion(adapter), applied };
+    }
+  });
 }
 
 /**
- * 打开（必要时创建）数据库并保证 schema 已迁移到最新版本。
- *
- * @param {{ dataDir?: string, env?: Record<string, string | undefined> }} [options]
- * @returns {Promise<{ adapter: import('./storage-adapter.mjs').StorageAdapter, dataDir: string, dbPath: string }>}
+ * Open and initialize the Daily Notes SQLite database and local storage directories.
  */
-export async function openDatabase(options = {}) {
-  const dataDir = options.dataDir ?? ensureDataDir(options.env ?? process.env);
-  mkdirSync(dataDir, { recursive: true });
-  const dbPath = dbPathFor(dataDir);
-  const adapter = await createAdapter(dbPath);
+export function openDatabase(options = {}) {
+  const dataDir = resolveDataDir(options.dataDir);
+  const attachmentsDir = path.join(dataDir, 'attachments');
+  const dbPath = path.join(dataDir, 'notes.db');
 
+  fs.mkdirSync(dataDir, { recursive: true });
+  fs.mkdirSync(attachmentsDir, { recursive: true });
+
+  const adapter = new StorageAdapter(dbPath);
   try {
-    applyMigrations(adapter);
-  } catch (error) {
+    runMigrations(adapter);
+  } catch (err) {
     adapter.close();
-    throw error;
+    throw err;
   }
 
-  return { adapter, dataDir, dbPath };
+  return {
+    dataDir,
+    dbPath,
+    attachmentsDir,
+    adapter,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    close() {
+      adapter.close();
+    },
+  };
 }

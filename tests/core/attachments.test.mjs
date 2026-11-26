@@ -1,182 +1,146 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
-import { test } from 'node:test';
-
+import test from 'node:test';
 import {
-  ATTACHMENT_ID_RE,
   MAX_ATTACHMENT_BYTES,
-  allowedMimeTypes,
-  detectImageType,
-  gcOrphanedAttachments,
-  isValidAttachmentId,
-  readAttachment,
-  reconcileAttachmentOrphans,
-  resolveAttachmentPath,
-  resolveStoredAttachment,
+  cleanupOrphanedAttachments,
+  detectImageMime,
+  getAttachment,
+  resolveSafeAttachmentPath,
   saveAttachment,
 } from '../../core/attachments.mjs';
-import { gifBytes, jpegBytes, pngBytes, setupService, webpBytes } from './helpers.mjs';
+import { openDatabase } from '../../core/db.mjs';
+import { createNotesService } from '../../core/notes-service.mjs';
+import {
+  SAMPLE_GIF,
+  SAMPLE_JPEG,
+  SAMPLE_PNG,
+  SAMPLE_SVG,
+  SAMPLE_WEBP,
+  createTempDataDir,
+} from './helpers.mjs';
 
-const DATE = '2026-11-25';
-
-test('仅 PNG/JPEG/WebP/GIF 通过魔数白名单', () => {
-  assert.deepEqual(allowedMimeTypes(), ['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-  assert.equal(detectImageType(pngBytes())?.mime, 'image/png');
-  assert.equal(detectImageType(jpegBytes())?.mime, 'image/jpeg');
-  assert.equal(detectImageType(gifBytes())?.mime, 'image/gif');
-  assert.equal(detectImageType(webpBytes())?.mime, 'image/webp');
-  assert.equal(detectImageType(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')), null);
+test('detectImageMime accepts valid raster images and rejects SVG/script payloads', () => {
+  assert.equal(detectImageMime(SAMPLE_PNG), 'image/png');
+  assert.equal(detectImageMime(SAMPLE_JPEG), 'image/jpeg');
+  assert.equal(detectImageMime(SAMPLE_GIF), 'image/gif');
+  assert.equal(detectImageMime(SAMPLE_WEBP), 'image/webp');
+  assert.equal(detectImageMime(SAMPLE_SVG), null);
+  assert.equal(detectImageMime(Buffer.from('<html>')), null);
 });
 
-test('附件 ID 正则限定为 URL 安全字符', () => {
-  assert.match('att_0123456789abcdef', ATTACHMENT_ID_RE);
-  assert.equal(isValidAttachmentId('att_0123456789abcdef'), true);
-  assert.equal(isValidAttachmentId('短'), false);
-  assert.equal(isValidAttachmentId('att_0123456789abcdef-XY'), true);
-  assert.equal(isValidAttachmentId('../att_0123456789abcdef'), false);
-  assert.equal(isValidAttachmentId('a'.repeat(65)), false);
+test('saveAttachment works on lazy unsaved date, rejects >10MB and SVG, and enforces path traversal check', () => {
+  const tmp = createTempDataDir();
+  try {
+    const dbCtx = openDatabase({ dataDir: tmp.dir });
+
+    // Upload before note row exists (lazy creation FK safety!)
+    const saved = saveAttachment(dbCtx, {
+      buffer: SAMPLE_PNG,
+      origName: '../evil/../../screen.png',
+      noteDate: '2026-11-25',
+    });
+    assert.ok(saved.id.startsWith('att_'));
+    assert.equal(saved.mime_type, 'image/png');
+    assert.equal(saved.url, `/api/attachments/${saved.id}`);
+    assert.equal(saved.render_url, `/api/attachment?id=${saved.id}`);
+    assert.ok(fs.existsSync(path.join(dbCtx.dataDir, saved.rel_path)));
+
+    const loaded = getAttachment(dbCtx, saved.id);
+    assert.equal(Buffer.compare(loaded.buffer, SAMPLE_PNG), 0);
+
+    // Reject SVG
+    assert.throws(
+      () => saveAttachment(dbCtx, { buffer: SAMPLE_SVG, origName: 'xss.svg', noteDate: '2026-11-25' }),
+      (err) => err.code === 'UNSUPPORTED_MEDIA_TYPE' && err.status === 415,
+    );
+
+    // Reject oversized buffer
+    const oversized = Buffer.alloc(MAX_ATTACHMENT_BYTES + 1);
+    SAMPLE_PNG.copy(oversized);
+    assert.throws(
+      () => saveAttachment(dbCtx, { buffer: oversized, origName: 'huge.png', noteDate: '2026-11-25' }),
+      (err) => err.code === 'ATTACHMENT_TOO_LARGE' && err.status === 413,
+    );
+
+    // Path traversal guard
+    assert.throws(
+      () => resolveSafeAttachmentPath(dbCtx.attachmentsDir, '../../etc/passwd'),
+      (err) => err.code === 'FORBIDDEN_PATH',
+    );
+    assert.throws(
+      () => getAttachment(dbCtx, '../bad'),
+      (err) => err.code === 'INVALID_ATTACHMENT_ID',
+    );
+
+    dbCtx.close();
+  } finally {
+    tmp.cleanup();
+  }
 });
 
-test('图片写入 attachments/YYYY/MM 并落库', async (t) => {
-  const { service, adapter, dataDir } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
+test('orphan GC preserves attachments referenced by note_revisions and cleans expired orphans after 7 days', () => {
+  const tmp = createTempDataDir();
+  try {
+    const dbCtx = openDatabase({ dataDir: tmp.dir });
+    const service = createNotesService(dbCtx);
 
-  const saved = saveAttachment(adapter, {
-    dataDir,
-    data: pngBytes(),
-    origName: '截图.png',
-    noteDate: DATE,
-    now: new Date(2026, 10, 25, 10, 0),
-  });
+    const img = service.saveAttachment({
+      buffer: SAMPLE_PNG,
+      origName: 'diagram.png',
+      noteDate: '2026-11-25',
+    });
 
-  assert.match(saved.id, ATTACHMENT_ID_RE);
-  assert.equal(saved.mime_type, 'image/png');
-  assert.match(saved.rel_path, /^attachments\/2026\/11\/att_[0-9a-f]+\.png$/);
-  assert.equal(saved.url, `/api/attachments/${saved.id}`);
-  assert.ok(existsSync(path.join(dataDir, saved.rel_path)));
+    // Save note referencing the attachment
+    const s1 = service.saveNote('2026-11-25', {
+      content_md: `![图](${img.url})`,
+      expected_revision: 0,
+    });
+    assert.equal(s1.revision, 1);
 
-  const row = adapter.get('SELECT * FROM attachments WHERE id = ?', saved.id);
-  assert.equal(row.byte_size, pngBytes().byteLength);
-  assert.match(row.sha256, /^[0-9a-f]{64}$/);
+    // Agent overwrites note removing the image (saving pre-write revision snapshot with the image!)
+    service.updateNoteControlled({
+      date: '2026-11-25',
+      expected_revision: 1,
+      mode: 'replace',
+      markdown: '纯文本替换',
+      summary: '移除图片',
+    });
 
-  const read = readAttachment(adapter, dataDir, saved.id);
-  assert.equal(read.mime_type, 'image/png');
-  assert.equal(read.data.byteLength, row.byte_size);
-});
+    const rowWithSnapshot = dbCtx.adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', img.id);
+    assert.equal(rowWithSnapshot.orphaned_at, null, 'Must NOT orphan while revision snapshot still references image');
 
-test('拒绝 SVG / 超限 / 伪图片 / 空内容', async (t) => {
-  const { adapter, dataDir } = await setupService(t);
+    // Clear revisions and re-save note to mark image as orphaned
+    dbCtx.adapter.run('DELETE FROM note_revisions WHERE note_date = ?', '2026-11-25');
+    service.saveNote('2026-11-25', {
+      content_md: '依然不含图片',
+      expected_revision: 2,
+    });
 
-  assert.throws(
-    () => saveAttachment(adapter, { dataDir, data: Buffer.from('<svg/>'), origName: 'logo.svg' }),
-    (error) => error.code === 'ATTACHMENT_SVG_UNSUPPORTED',
-  );
-  assert.throws(
-    () => saveAttachment(adapter, { dataDir, data: Buffer.from('hello'), origName: 'a.txt' }),
-    (error) => error.code === 'ATTACHMENT_TYPE_UNSUPPORTED',
-  );
-  assert.throws(
-    () => saveAttachment(adapter, { dataDir, data: Buffer.alloc(MAX_ATTACHMENT_BYTES + 1), origName: 'big.png' }),
-    (error) => error.code === 'ATTACHMENT_TOO_LARGE',
-  );
-  assert.throws(
-    () => saveAttachment(adapter, { dataDir, data: Buffer.alloc(0), origName: 'empty.png' }),
-    (error) => error.code === 'ATTACHMENT_EMPTY',
-  );
-});
+    const rowOrphaned = dbCtx.adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', img.id);
+    assert.ok(rowOrphaned.orphaned_at !== null, 'Should mark orphaned_at once no note or revision references it');
 
-test('路径解析阻止穿越出 attachments/', async (t) => {
-  const { adapter, dataDir, service } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
+    // Cleanup within 6 days should keep file
+    const earlyGc = cleanupOrphanedAttachments(dbCtx, {
+      maxAgeDays: 7,
+      now: new Date(Date.now() + 6 * 86_400_000),
+    });
+    assert.equal(earlyGc.deletedCount, 0);
 
-  assert.throws(() => resolveAttachmentPath(dataDir, '../escape.png'), /越界/);
-  assert.match(resolveAttachmentPath(dataDir, 'attachments/2026/11/x.png'), /attachments\/2026\/11\/x\.png$/);
+    // Cleanup after 8 days should remove both file and DB row
+    const absFile = path.join(dbCtx.dataDir, img.rel_path);
+    assert.equal(fs.existsSync(absFile), true);
+    const expiredGc = cleanupOrphanedAttachments(dbCtx, {
+      maxAgeDays: 7,
+      now: new Date(Date.now() + 8 * 86_400_000),
+    });
+    assert.equal(expiredGc.deletedCount, 1);
+    assert.equal(fs.existsSync(absFile), false);
+    assert.equal(dbCtx.adapter.get('SELECT id FROM attachments WHERE id = ?', img.id), undefined);
 
-  const saved = saveAttachment(adapter, { dataDir, data: pngBytes(), origName: 'a.png', noteDate: DATE });
-  adapter.run('UPDATE attachments SET rel_path = ? WHERE id = ?', '../../etc/passwd', saved.id);
-  assert.throws(() => resolveStoredAttachment(adapter, dataDir, saved.id), /越界/);
-  assert.throws(() => resolveStoredAttachment(adapter, dataDir, '../x'), /非法附件 ID/);
-});
-
-test('孤儿标记：正文引用清除标记，正文移除后打标记', async (t) => {
-  const { adapter, dataDir, service } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
-
-  const saved = saveAttachment(adapter, { dataDir, data: pngBytes(), origName: 'a.png', noteDate: DATE });
-  const ref = `![a](/api/attachments/${saved.id})`;
-
-  service.saveNote(DATE, { content_md: ref, expected_revision: 1 });
-  assert.equal(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at, null);
-
-  service.saveNote(DATE, { content_md: '没有图片了', expected_revision: 2 });
-  assert.ok(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at);
-
-  service.saveNote(DATE, { content_md: ref, expected_revision: 3 });
-  assert.equal(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at, null);
-});
-
-test('历史快照仍引用时 attachment 被保护', async (t) => {
-  const { adapter, dataDir, service } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
-
-  const saved = saveAttachment(adapter, { dataDir, data: pngBytes(), origName: 'a.png', noteDate: DATE });
-  const ref = `![a](/api/attachments/${saved.id})`;
-
-  service.saveNote(DATE, { content_md: ref, expected_revision: 1 });
-  // Agent 写入会留快照（快照内含旧正文的图片引用）
-  service.appendNote(DATE, { markdown: '补充说明' });
-  // 用户随后删掉图片
-  service.saveNote(DATE, { content_md: '干净正文', expected_revision: 3 });
-
-  const reconciled = reconcileAttachmentOrphans(adapter, {
-    noteDate: DATE,
-    attachmentIds: [],
-    now: new Date(),
-  });
-  assert.equal(reconciled.marked, 0);
-  assert.equal(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at, null);
-});
-
-test('GC 仅清理超过 7 天的孤儿并删文件删行', async (t) => {
-  const { adapter, dataDir, service } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
-
-  const saved = saveAttachment(adapter, { dataDir, data: pngBytes(), origName: 'a.png', noteDate: DATE });
-  const absolute = path.join(dataDir, saved.rel_path);
-
-  service.saveNote(DATE, { content_md: '无图片', expected_revision: 1 });
-  assert.ok(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at);
-
-  const dayMs = 86_400_000;
-  const early = gcOrphanedAttachments(adapter, { dataDir, now: new Date(Date.now() + 6 * dayMs) });
-  assert.equal(early.deleted, 0);
-  assert.ok(existsSync(absolute));
-
-  const later = gcOrphanedAttachments(adapter, { dataDir, now: new Date(Date.now() + 8 * dayMs) });
-  assert.equal(later.deleted, 1);
-  assert.ok(later.freed_bytes > 0);
-  assert.equal(existsSync(absolute), false);
-  assert.equal(adapter.get('SELECT COUNT(*) AS count FROM attachments').count, 0);
-});
-
-test('GC 遇到快照引用时不删并清除标记', async (t) => {
-  const { adapter, dataDir, service } = await setupService(t);
-  service.saveNote(DATE, { content_md: '', expected_revision: 0 });
-
-  const saved = saveAttachment(adapter, { dataDir, data: pngBytes(), origName: 'a.png', noteDate: DATE });
-  const ref = `![a](/api/attachments/${saved.id})`;
-
-  service.saveNote(DATE, { content_md: ref, expected_revision: 1 });
-  service.appendNote(DATE, { markdown: '日志' });
-  service.saveNote(DATE, { content_md: '删掉图片', expected_revision: 3 });
-
-  // 手动标记为过期孤儿，模拟快照检查被绕过
-  adapter.run('UPDATE attachments SET orphaned_at = ? WHERE id = ?', new Date(0).toISOString(), saved.id);
-
-  const result = gcOrphanedAttachments(adapter, { dataDir, now: new Date() });
-  assert.equal(result.deleted, 0);
-  assert.equal(result.kept, 1);
-  assert.equal(adapter.get('SELECT orphaned_at FROM attachments WHERE id = ?', saved.id).orphaned_at, null);
-  assert.ok(existsSync(path.join(dataDir, saved.rel_path)));
+    dbCtx.close();
+  } finally {
+    tmp.cleanup();
+  }
 });

@@ -1,228 +1,131 @@
-/**
- * StorageAdapter —— 对 node:sqlite（DatabaseSync）的最小抽象。
- *
- * 存在意义：keep the SQL surface 稳定（docs/ARCHITECTURE.md 第 3.2 节），一旦需要降级为
- * better-sqlite3，只需替换本文件实现，上层 notes-service 无需改动。
- *
- * 每次连接都重新执行 docs/DATA_MODEL.md 第 2 节的全部 5 条 PRAGMA。
- */
+import { DatabaseSync } from 'node:sqlite';
 
-export const MIN_NODE_VERSION = '22.5.0';
+const SLEEP_ARRAY = new Int32Array(new SharedArrayBuffer(4));
 
-/** 与 docs/DATA_MODEL.md 第 2 节逐条对应，顺序不可调整。 */
-export const CONNECTION_PRAGMAS = Object.freeze([
-  'PRAGMA journal_mode = WAL',
-  'PRAGMA synchronous = NORMAL',
-  'PRAGMA foreign_keys = ON',
-  'PRAGMA busy_timeout = 5000',
-  'PRAGMA temp_store = MEMORY',
-]);
+function sleepSync(ms) {
+  Atomics.wait(SLEEP_ARRAY, 0, 0, ms);
+}
 
-function parseVersion(version) {
-  const [major = 0, minor = 0, patch = 0] = String(version)
-    .split('.')
-    .map((part) => Number.parseInt(part, 10) || 0);
-  return [major, minor, patch];
+function isBusyError(err) {
+  if (!err) return false;
+  const code = String(err.errcode ?? err.code ?? '');
+  const msg = String(err.message ?? '').toLowerCase();
+  return code === '5' || code === 'SQLITE_BUSY' || msg.includes('database is locked') || msg.includes('busy');
 }
 
 /**
- * @param {string} [version]
- * @returns {boolean}
+ * Thin wrapper around Node.js built-in node:sqlite DatabaseSync
+ * enforcing WAL mode, foreign keys, busy_timeout, and BEGIN IMMEDIATE write transactions.
  */
-export function isNodeVersionSupported(version = process.versions.node) {
-  const [actualMajor, actualMinor, actualPatch] = parseVersion(version);
-  const [needMajor, needMinor, needPatch] = parseVersion(MIN_NODE_VERSION);
-  if (actualMajor !== needMajor) return actualMajor > needMajor;
-  if (actualMinor !== needMinor) return actualMinor > needMinor;
-  return actualPatch >= needPatch;
-}
-
-/**
- * @param {string} [version]
- */
-export function assertNodeVersion(version = process.versions.node) {
-  if (isNodeVersionSupported(version)) return;
-  const error = new Error(
-    `Daily Notes 需要 Node.js >= ${MIN_NODE_VERSION}（内置 node:sqlite），当前为 ${version}。`,
-  );
-  error.code = 'UNSUPPORTED_NODE_VERSION';
-  throw error;
-}
-
-function flattenParams(params) {
-  // run('...', [a, b]) 与 run('...', a, b) 等价
-  return params.length === 1 && Array.isArray(params[0]) ? params[0] : params;
-}
-
 export class StorageAdapter {
-  /** @type {import('node:sqlite').DatabaseSync | null} */
-  #db = null;
-  #txDepth = 0;
+  constructor(dbPath) {
+    this.dbPath = dbPath;
+    this.db = new DatabaseSync(dbPath);
+    this._closed = false;
+    this._txDepth = 0;
+    this._savepointSeq = 0;
 
-  /**
-   * @param {string} filePath 数据库文件路径，或 ':memory:'
-   */
-  constructor(filePath) {
-    if (typeof filePath !== 'string' || filePath === '') {
-      throw new TypeError('StorageAdapter 需要数据库文件路径');
+    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db.exec('PRAGMA synchronous = NORMAL;');
+    this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA busy_timeout = 5000;');
+    this.db.exec('PRAGMA temp_store = MEMORY;');
+  }
+
+  isOpen() {
+    return !this._closed;
+  }
+
+  getPragma(name) {
+    if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+      throw new Error(`Invalid PRAGMA name: ${name}`);
     }
-    this.filePath = filePath;
+    const row = this.db.prepare(`PRAGMA ${name};`).get();
+    if (!row) return undefined;
+    const keys = Object.keys(row);
+    return keys.length ? row[keys[0]] : undefined;
   }
 
-  /** @returns {boolean} */
-  get isOpen() {
-    return this.#db !== null;
+  exec(sql) {
+    return this.db.exec(sql);
   }
 
-  /** @returns {import('node:sqlite').DatabaseSync} */
-  get handle() {
-    if (!this.#db) throw new Error('数据库连接尚未打开（先调用 open()）');
-    return this.#db;
+  prepare(sql) {
+    return this.db.prepare(sql);
+  }
+
+  get(sql, ...params) {
+    return this.db.prepare(sql).get(...params);
+  }
+
+  all(sql, ...params) {
+    return this.db.prepare(sql).all(...params);
+  }
+
+  run(sql, ...params) {
+    return this.db.prepare(sql).run(...params);
   }
 
   /**
-   * 建立连接并应用全部 PRAGMA。
-   *
-   * @returns {Promise<StorageAdapter>}
+   * Execute fn inside a BEGIN IMMEDIATE transaction (with nested SAVEPOINT support).
    */
-  async open() {
-    if (this.#db) return this;
-    assertNodeVersion();
+  transaction(fn) {
+    if (this._txDepth > 0) {
+      const spName = `sp_${++this._savepointSeq}`;
+      this.db.exec(`SAVEPOINT ${spName};`);
+      this._txDepth += 1;
+      try {
+        const result = fn(this);
+        this.db.exec(`RELEASE SAVEPOINT ${spName};`);
+        return result;
+      } catch (err) {
+        try {
+          this.db.exec(`ROLLBACK TO SAVEPOINT ${spName};`);
+          this.db.exec(`RELEASE SAVEPOINT ${spName};`);
+        } catch {
+          // Ignore rollback failure if outer transaction already aborted
+        }
+        throw err;
+      } finally {
+        this._txDepth -= 1;
+      }
+    }
 
-    const { DatabaseSync } = await import('node:sqlite');
-    const db = new DatabaseSync(this.filePath);
-    this.#db = db;
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        this.db.exec('BEGIN IMMEDIATE;');
+        break;
+      } catch (err) {
+        if (isBusyError(err) && attempt < maxAttempts - 1) {
+          sleepSync(10 * (attempt + 1));
+          continue;
+        }
+        throw err;
+      }
+    }
 
+    this._txDepth = 1;
     try {
-      for (const pragma of CONNECTION_PRAGMAS) db.exec(pragma);
-      // 显式触发一次读，确保连接可用（损坏文件在此处尽早暴露）
-      db.prepare('SELECT 1 AS ok').get();
-    } catch (error) {
-      this.close();
-      throw error;
+      const result = fn(this);
+      this.db.exec('COMMIT;');
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK;');
+      } catch {
+        // Ignore rollback error if connection is no longer in transaction
+      }
+      throw err;
+    } finally {
+      this._txDepth = 0;
     }
-
-    return this;
   }
 
   close() {
-    if (!this.#db) return;
-    const db = this.#db;
-    this.#db = null;
-    try {
-      db.close();
-    } catch {
-      /* 已关闭的连接忽略 */
+    if (!this._closed) {
+      this.db.close();
+      this._closed = true;
     }
   }
-
-  /**
-   * @param {string} sql
-   */
-  exec(sql) {
-    this.handle.exec(sql);
-  }
-
-  /**
-   * @param {string} sql
-   */
-  prepare(sql) {
-    return this.handle.prepare(sql);
-  }
-
-  /**
-   * @param {string} sql
-   * @param {...unknown} params
-   * @returns {Record<string, unknown> | undefined}
-   */
-  get(sql, ...params) {
-    return this.prepare(sql).get(...flattenParams(params));
-  }
-
-  /**
-   * @param {string} sql
-   * @param {...unknown} params
-   * @returns {Record<string, unknown>[]}
-   */
-  all(sql, ...params) {
-    return this.prepare(sql).all(...flattenParams(params));
-  }
-
-  /**
-   * @param {string} sql
-   * @param {...unknown} params
-   * @returns {import('node:sqlite').StatementResultingChanges}
-   */
-  run(sql, ...params) {
-    return this.prepare(sql).run(...flattenParams(params));
-  }
-
-  /**
-   * BEGIN IMMEDIATE 写事务（提前取写锁，避免 WAL 下的升级死锁）。
-   * 支持嵌套调用（内层用 SAVEPOINT）。
-   *
-   * @template T
-   * @param {() => T} fn
-   * @returns {T}
-   */
-  transaction(fn) {
-    if (typeof fn !== 'function') throw new TypeError('transaction 需要回调函数');
-
-    const depth = this.#txDepth;
-    const savepoint = `sp_${depth}`;
-    if (depth === 0) this.exec('BEGIN IMMEDIATE');
-    else this.exec(`SAVEPOINT ${savepoint}`);
-
-    this.#txDepth = depth + 1;
-    try {
-      const result = fn();
-      if (depth === 0) this.exec('COMMIT');
-      else this.exec(`RELEASE ${savepoint}`);
-      return result;
-    } catch (error) {
-      try {
-        if (depth === 0) this.exec('ROLLBACK');
-        else this.exec(`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`);
-      } catch {
-        /* 回滚失败不掩盖原始错误 */
-      }
-      throw error;
-    } finally {
-      this.#txDepth = depth;
-    }
-  }
-
-  /**
-   * 读取当前连接的 PRAGMA 值，供健康检查与测试断言。
-   *
-   * @returns {Record<string, unknown>}
-   */
-  readPragmas() {
-    const read = (pragma, column) => {
-      try {
-        return this.get(`PRAGMA ${pragma}`)?.[column];
-      } catch {
-        return undefined;
-      }
-    };
-    return {
-      journal_mode: read('journal_mode', 'journal_mode'),
-      synchronous: read('synchronous', 'synchronous'),
-      foreign_keys: read('foreign_keys', 'foreign_keys'),
-      busy_timeout: read('busy_timeout', 'timeout'),
-      temp_store: read('temp_store', 'temp_store'),
-    };
-  }
-}
-
-/**
- * 建立并打开适配器。
- *
- * @param {string} filePath
- * @returns {Promise<StorageAdapter>}
- */
-export async function createAdapter(filePath) {
-  const adapter = new StorageAdapter(filePath);
-  await adapter.open();
-  return adapter;
 }
