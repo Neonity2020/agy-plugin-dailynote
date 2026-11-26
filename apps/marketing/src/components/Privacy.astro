@@ -1,0 +1,263 @@
+---
+import Icon from './Icon.astro';
+
+const guarantees = [
+  { value: '0', label: '账号体系' },
+  { value: '0', label: '云端请求 / 遥测' },
+  { value: '100%', label: '离线可用' },
+  { value: '1 行', label: '环境变量换目录' },
+];
+---
+
+<section class="section privacy" id="privacy">
+  <div class="container privacy-grid">
+    <div class="privacy-copy">
+      <p class="eyebrow" data-reveal>Local by default</p>
+      <h2 class="section-title" data-reveal>数据不出本机，<br /><span class="grad">就是默认值。</span></h2>
+      <p class="section-lead" data-reveal>
+        没有账号、没有图床、没有后台同步。笔记与截图全部写进你磁盘上的 SQLite 与附件目录，
+        断网也能照常打开、检索、导出。嫌默认路径不合适？一个环境变量就能改到云盘或任意挂载点。
+      </p>
+
+      <dl class="stats" data-reveal>
+        {
+          guarantees.map((item) => (
+            <div class="stat">
+              <dt>{item.value}</dt>
+              <dd>{item.label}</dd>
+            </div>
+          ))
+        }
+      </dl>
+
+      <ul class="bullets" data-reveal>
+        <li><Icon name="check" size={15} /> WAL 模式 + busy_timeout，侧栏与 Agent 并发读写不打架</li>
+        <li><Icon name="check" size={15} /> 附件只存相对路径，数据库保持轻量可备份</li>
+        <li><Icon name="check" size={15} /> 完整源码可审计，MIT 协议，随装随卸</li>
+      </ul>
+    </div>
+
+    <div class="tree card" data-reveal data-reveal-delay="120">
+      <div class="tree-head">
+        <Icon name="lock" size={14} />
+        <span>本机存储</span>
+        <span class="tree-tag">sqlite · wal</span>
+      </div>
+      <div class="tree-body">
+        <p class="tree-path">~/.gemini/daily-notes/</p>
+        <ul class="tree-list">
+          <li><span class="tree-icon">▤</span> notes.db <em>笔记 + FTS5 索引</em></li>
+          <li><span class="tree-icon">▤</span> notes.db-wal <em>并发写入日志</em></li>
+          <li><span class="tree-icon">▤</span> notes.db-shm <em>共享内存索引</em></li>
+          <li class="tree-dir"><span class="tree-icon">▸</span> attachments/ <em>本地图片</em></li>
+          <li class="tree-sub">
+            <span class="tree-path-sub">└─ 2026/11/att_01JF3K9X.png</span>
+          </li>
+        </ul>
+        <div class="tree-env">
+          <span class="env-key">DAILY_NOTES_DATA_DIR</span>
+          <span class="env-eq">=</span>
+          <span class="env-val">/Volumes/notes</span>
+        </div>
+      </div>
+      <div class="tree-foot">
+        <Icon name="shield" size={13} />
+        删除目录即彻底清除，不留后台副本
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .privacy {
+    border-top: 1px solid var(--line);
+  }
+
+  .privacy-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.9fr);
+    gap: clamp(32px, 5vw, 72px);
+    align-items: center;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, auto);
+    gap: 12px 26px;
+    margin-top: 34px;
+  }
+
+  .stat dt {
+    font-size: clamp(24px, 3vw, 32px);
+    font-weight: 650;
+    letter-spacing: -0.04em;
+    color: var(--fg);
+    line-height: 1.1;
+  }
+
+  .stat dd {
+    margin: 3px 0 0;
+    font-size: 11.5px;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+
+  .bullets {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    margin-top: 30px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+  }
+
+  .bullets li {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+
+  .bullets svg {
+    color: var(--green);
+    margin-top: 3px;
+    flex: none;
+  }
+
+  .tree {
+    background: #0a0c10;
+  }
+
+  .tree-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+    color: var(--fg-2);
+  }
+
+  .tree-head svg {
+    color: var(--blue-2);
+  }
+
+  .tree-tag {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+
+  .tree-body {
+    padding: 16px;
+  }
+
+  .tree-path {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--blue-2);
+  }
+
+  .tree-list {
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--fg-2);
+  }
+
+  .tree-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tree-icon {
+    color: var(--faint);
+    width: 10px;
+  }
+
+  .tree-list em {
+    font-style: normal;
+    font-family: var(--font);
+    font-size: 10.5px;
+    color: var(--faint);
+    margin-left: auto;
+  }
+
+  .tree-dir {
+    color: var(--blue-2);
+  }
+
+  .tree-sub {
+    padding-left: 18px;
+  }
+
+  .tree-path-sub {
+    color: var(--faint);
+    font-size: 10.5px;
+  }
+
+  .tree-env {
+    margin-top: 16px;
+    padding-top: 13px;
+    border-top: 1px dashed var(--line-strong);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .env-key {
+    color: #c4b5fd;
+  }
+
+  .env-eq {
+    color: var(--faint);
+  }
+
+  .env-val {
+    color: #86d39a;
+  }
+
+  .tree-foot {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--line);
+    font-size: 11px;
+    color: var(--faint);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .tree-foot svg {
+    color: var(--green);
+  }
+
+  @media (max-width: 920px) {
+    .privacy-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .stats {
+      grid-template-columns: repeat(2, auto);
+    }
+
+    .tree-list em {
+      display: none;
+    }
+  }
+</style>

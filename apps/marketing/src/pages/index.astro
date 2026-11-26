@@ -1,0 +1,32 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from '../components/Nav.astro';
+import Hero from '../components/Hero.astro';
+import Problem from '../components/Problem.astro';
+import Features from '../components/Features.astro';
+import AgentCollab from '../components/AgentCollab.astro';
+import Privacy from '../components/Privacy.astro';
+import Install from '../components/Install.astro';
+import FAQ from '../components/FAQ.astro';
+import FinalCTA from '../components/FinalCTA.astro';
+import Footer from '../components/Footer.astro';
+
+const title = 'Daily Notes — Antigravity 侧边栏里的本地优先每日笔记';
+const description =
+  '打开即写的所见即所得每日笔记，住在 Antigravity 辅助侧边栏里。本地 SQLite 存储、全文检索、Agent 双向协同与一键撤销。MIT 开源，免费下载。';
+---
+
+<Base title={title} description={description}>
+  <Nav />
+  <main id="main">
+    <Hero />
+    <Problem />
+    <Features />
+    <AgentCollab />
+    <Privacy />
+    <Install />
+    <FAQ />
+    <FinalCTA />
+  </main>
+  <Footer />
+</Base>

@@ -1,57 +1,28 @@
 {
-  "name": "daily-notes",
-  "displayName": "Daily Notes",
+  "name": "agy-plugin-dailynote",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "在 Antigravity 侧边栏提供所见即所得的每日笔记编辑体验，数据保存在本地 SQLite，并支持与 Agent 安全双向协同。",
+  "description": "Daily Notes (每日笔记) Antigravity plugin pnpm monorepo.",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Neonity2020/agy-plugin-dailynote.git"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=22.5.0"
   },
+  "packageManager": "pnpm@10.12.1",
   "scripts": {
-    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit -p web/tsconfig.json",
-    "build:web": "node ./node_modules/vite/bin/vite.js build --config web/vite.config.ts",
-    "build:mcp": "node ./scripts/build-mcp.mjs",
-    "build": "node ./scripts/build-all.mjs",
-    "dev:sidecar": "node sidecars/daily_notes/main.mjs",
-    "dev:web": "node ./node_modules/vite/bin/vite.js --config web/vite.config.ts",
-    "test": "node --test tests/core/*.test.mjs tests/sidecar/*.test.mjs tests/mcp/*.test.mjs tests/web/*.test.mjs tests/plugin-manifest.test.mjs"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.2",
-    "zod": "^3.25.0"
-  },
-  "devDependencies": {
-    "@tiptap/core": "^2.27.0",
-    "@tiptap/extension-code-block-lowlight": "^2.27.0",
-    "@tiptap/extension-highlight": "^2.27.0",
-    "@tiptap/extension-image": "^2.27.0",
-    "@tiptap/extension-link": "^2.27.0",
-    "@tiptap/extension-placeholder": "^2.27.0",
-    "@tiptap/extension-table": "^2.27.0",
-    "@tiptap/extension-table-cell": "^2.27.0",
-    "@tiptap/extension-table-header": "^2.27.0",
-    "@tiptap/extension-table-row": "^2.27.0",
-    "@tiptap/extension-task-item": "^2.27.0",
-    "@tiptap/extension-task-list": "^2.27.0",
-    "@tiptap/pm": "^2.27.0",
-    "@tiptap/react": "^2.27.0",
-    "@tiptap/starter-kit": "^2.27.0",
-    "@tiptap/suggestion": "^2.27.0",
-    "@types/mdast": "^4.0.4",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "esbuild": "^0.25.0",
-    "highlight.js": "^11.11.1",
-    "lowlight": "^3.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "remark-gfm": "^4.0.1",
-    "remark-parse": "^11.0.0",
-    "typescript": "^5.7.3",
-    "unified": "^11.0.5",
-    "vite": "^6.0.11"
+    "typecheck": "pnpm --filter @daily-notes/plugin typecheck && pnpm --filter @daily-notes/marketing check",
+    "build": "pnpm --filter @daily-notes/plugin build && pnpm --filter @daily-notes/marketing build",
+    "build:plugin": "pnpm --filter @daily-notes/plugin build",
+    "build:marketing": "pnpm --filter @daily-notes/marketing build",
+    "test": "pnpm --filter @daily-notes/core test && pnpm --filter @daily-notes/plugin test",
+    "test:core": "pnpm --filter @daily-notes/core test",
+    "test:plugin": "pnpm --filter @daily-notes/plugin test",
+    "dev:sidecar": "pnpm --filter @daily-notes/plugin dev:sidecar",
+    "dev:web": "pnpm --filter @daily-notes/plugin dev:web",
+    "dev:marketing": "pnpm --filter @daily-notes/marketing dev"
   }
 }

@@ -1,0 +1,160 @@
+---
+import Icon from './Icon.astro';
+import { ISSUES_URL } from '../config';
+
+const faqs = [
+  {
+    q: '需要联网或注册账号吗？',
+    a: '都不需要。笔记、检索、图片、导出全部在本机完成。安装后即便拔掉网线，侧边栏依然可用。',
+  },
+  {
+    q: '笔记到底存在哪里？可以换位置吗？',
+    a: '默认写入 ~/.gemini/daily-notes/ 下的 SQLite 与 attachments/ 目录。设置环境变量 DAILY_NOTES_DATA_DIR 即可整体重定向到任意磁盘，例如加密卷或自建同步目录。',
+  },
+  {
+    q: '对 Node.js 版本有要求吗？',
+    a: '需要 22.5.0 及以上，因为核心依赖内置 node:sqlite。若本机版本过低，用 nvm 或 fnm 切到受支持版本再构建即可。',
+  },
+  {
+    q: 'Agent 会覆盖我手写的内容吗？',
+    a: '默认不会。Agent 优先走安全追加与定点勾选；整篇更新必须携带 expected_revision，版本落后会被乐观锁拒绝。每次 AI 写入前还会自动快照，侧栏一键撤销。',
+  },
+  {
+    q: '支持哪些平台？',
+    a: '跟随 Antigravity 客户端平台。项目在 macOS 上开发与验证，Linux 同样适用；Windows 建议在 WSL 中构建与安装。',
+  },
+  {
+    q: '卸载插件会把笔记一起删掉吗？',
+    a: '不会。插件目录与数据目录分离，卸载只移除代码；你的笔记与附件仍完整留在 ~/.gemini/daily-notes/，重装后即可继续。',
+  },
+  {
+    q: '有云同步或多人协作吗？',
+    a: 'V1 不内置账号与实时协作，专注本地单机体验。你可以把 DAILY_NOTES_DATA_DIR 指向云盘目录作为备份，但请避免多端同时写入。',
+  },
+  {
+    q: '许可证与二次开发？',
+    a: 'MIT。可自由查看、修改与分发；仓库内 docs/ 提供了 PRD、数据模型、架构与 UI 规范，便于二次开发。',
+  },
+];
+---
+
+<section class="section faq" id="faq">
+  <div class="container faq-grid">
+    <div class="faq-side">
+      <p class="eyebrow" data-reveal>FAQ</p>
+      <h2 class="section-title" data-reveal>安装之前，<br />你可能会问。</h2>
+      <p class="faq-more" data-reveal>
+        还有没列到的？
+        <a href={ISSUES_URL} target="_blank" rel="noopener noreferrer">在 GitHub 开个 Issue <Icon name="arrow" size={13} /></a>
+      </p>
+    </div>
+
+    <div class="faq-list">
+      {
+        faqs.map((faq, index) => (
+          <details class="faq-item" data-reveal data-reveal-delay={index * 40}>
+            <summary>
+              <span>{faq.q}</span>
+              <span class="faq-plus" aria-hidden="true">+</span>
+            </summary>
+            <p>{faq.a}</p>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq {
+    border-top: 1px solid var(--line);
+  }
+
+  .faq-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+    gap: clamp(32px, 6vw, 84px);
+    align-items: start;
+  }
+
+  .faq-side {
+    position: sticky;
+    top: 104px;
+  }
+
+  .faq-more {
+    margin-top: 22px;
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+
+  .faq-more a {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--blue-2);
+    border-bottom: 1px solid rgba(147, 197, 253, 0.35);
+    padding-bottom: 1px;
+  }
+
+  .faq-item {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .faq-item summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 19px 2px;
+    cursor: pointer;
+    list-style: none;
+    font-size: 15.5px;
+    font-weight: 560;
+    letter-spacing: -0.012em;
+    color: var(--fg-2);
+    transition: color 0.16s;
+  }
+
+  .faq-item summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq-item summary:hover {
+    color: var(--fg);
+  }
+
+  .faq-plus {
+    font-family: var(--mono);
+    font-size: 18px;
+    color: var(--faint);
+    line-height: 1;
+    transition: transform 0.22s;
+  }
+
+  .faq-item[open] summary {
+    color: var(--fg);
+  }
+
+  .faq-item[open] .faq-plus {
+    transform: rotate(45deg);
+    color: var(--blue-2);
+  }
+
+  .faq-item p {
+    padding: 0 34px 22px 2px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.75;
+  }
+
+  @media (max-width: 860px) {
+    .faq-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .faq-side {
+      position: static;
+    }
+  }
+</style>

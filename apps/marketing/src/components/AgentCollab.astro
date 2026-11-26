@@ -1,0 +1,356 @@
+---
+import Icon from './Icon.astro';
+import type { IconName } from '../icons';
+
+const rails: { icon: IconName; title: string; body: string }[] = [
+  {
+    icon: 'undo',
+    title: '写入前自动快照',
+    body: 'Agent 每次落笔前，服务端先把旧全文写进 note_revisions。侧栏弹出「Agent 已更新 · 一键撤销」，点一下就回滚。',
+  },
+  {
+    icon: 'lock',
+    title: '乐观锁防覆盖',
+    body: '整篇更新必须带 expected_revision。你手写的未保存改动不会被静默冲掉，冲突时明确提示。',
+  },
+  {
+    icon: 'shield',
+    title: '默认安全追加',
+    body: 'Agent 优先用 append 追加、用 toggle_todo 定点勾选，而不是动辄重写整页。',
+  },
+];
+
+const resources = [
+  'daily-notes://today',
+  'daily-notes://yesterday',
+  'daily-notes://todos/open',
+  'daily-notes://recent',
+  'daily-notes://notes/2026-11-25',
+];
+---
+
+<section class="section agent" id="agent">
+  <div class="container agent-grid">
+    <div class="agent-copy">
+      <p class="eyebrow" data-reveal>Human + agent, safely</p>
+      <h2 class="section-title" data-reveal>
+        让 Agent 记得住，<br /><span class="grad">也改得动。</span>
+      </h2>
+      <p class="section-lead" data-reveal>
+        7 个 MCP 工具覆盖读取、区间批量读取、全文检索、未完成待办汇总、安全追加、待办勾选与带锁更新。
+        对话里一个 <code>@</code> 就能引用今日、昨日、近期待办或任意日期笔记——上下文不用你复制粘贴。
+      </p>
+
+      <div class="rails">
+        {
+          rails.map((rail, index) => (
+            <div class="rail-row" data-reveal data-reveal-delay={index * 80}>
+              <span class="rail-icon"><Icon name={rail.icon} size={17} /></span>
+              <div>
+                <h3>{rail.title}</h3>
+                <p>{rail.body}</p>
+              </div>
+            </div>
+          ))
+        }
+      </div>
+
+      <p class="skills" data-reveal>
+        内置工作流：<code>/daily-summary</code> 汇总结论与待办 · <code>/daily-capture</code>
+        把对话结论结构化写进今日笔记。
+      </p>
+    </div>
+
+    <div class="agent-visual" data-reveal data-reveal-delay="120">
+      <div class="term card">
+        <div class="term-head">
+          <span class="term-dot" aria-hidden="true"></span>
+          <span class="term-title">mcp_config.json</span>
+          <span class="term-badge">stdio</span>
+        </div>
+        <pre class="term-body"><code><span class="c-prop">"mcpServers"</span>{': {'}
+  <span class="c-key">"daily-notes"</span>{': {'}
+    <span class="c-prop">"command"</span>{': '}<span class="c-str">"node"</span>{','}
+    <span class="c-prop">"args"</span>{': ['}<span class="c-str">"mcp/server.mjs"</span>{']'}
+  {'}'}
+{'}'}</code></pre>
+        <div class="tool-list">
+          <p class="tool-label">exposed tools <span>7</span></p>
+          <ul>
+            <li><code>daily_notes_get</code><em>read</em></li>
+            <li><code>daily_notes_list_range</code><em>read</em></li>
+            <li><code>daily_notes_search</code><em>read</em></li>
+            <li><code>daily_notes_get_open_todos</code><em>read</em></li>
+            <li class="write"><code>daily_notes_append</code><em>safe write</em></li>
+            <li class="write"><code>daily_notes_toggle_todo</code><em>safe write</em></li>
+            <li class="locked"><code>daily_notes_update</code><em>optimistic lock</em></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="mentions card" aria-hidden="true">
+        <p class="mentions-head"><b>@</b> 引用笔记资源</p>
+        <div class="mention-chips">
+          {resources.map((resource, index) => (
+            <span class:list={['mention', index === 0 && 'mention-active']}>{resource}</span>
+          ))}
+        </div>
+        <p class="mentions-foot">在 Composer 输入 @ 直接挑选，随消息注入上下文</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .agent {
+    border-top: 1px solid var(--line);
+    background:
+      radial-gradient(900px 460px at 82% 20%, rgba(37, 99, 235, 0.09), transparent 70%),
+      transparent;
+  }
+
+  .agent-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr);
+    gap: clamp(32px, 5vw, 68px);
+    align-items: start;
+  }
+
+  .section-lead code,
+  .skills code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    color: var(--blue-2);
+    background: var(--blue-soft);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .rails {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    margin-top: 34px;
+  }
+
+  .rail-row {
+    display: flex;
+    gap: 14px;
+  }
+
+  .rail-icon {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    flex: none;
+    border-radius: 8px;
+    border: 1px solid var(--line-strong);
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--blue-2);
+  }
+
+  .rail-row h3 {
+    font-size: 15.5px;
+    font-weight: 620;
+    letter-spacing: -0.015em;
+  }
+
+  .rail-row p {
+    margin-top: 5px;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.68;
+    max-width: 44ch;
+  }
+
+  .skills {
+    margin-top: 30px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-size: 13.5px;
+    color: var(--muted);
+    line-height: 2;
+  }
+
+  .agent-visual {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    position: sticky;
+    top: 100px;
+  }
+
+  .term {
+    background: #0a0c10;
+  }
+
+  .term-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .term-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(109, 179, 93, 0.15);
+  }
+
+  .term-title {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  .term-badge {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--blue-2);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+
+  .term-body {
+    margin: 0;
+    padding: 16px 16px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.85;
+    color: var(--fg-2);
+    overflow-x: auto;
+  }
+
+  .c-prop {
+    color: #c4b5fd;
+  }
+
+  .c-key {
+    color: #93c5fd;
+  }
+
+  .c-str {
+    color: #86d39a;
+  }
+
+  .tool-list {
+    border-top: 1px solid var(--line);
+    padding: 12px 14px 14px;
+  }
+
+  .tool-label {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--mono);
+    font-size: 9.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .tool-label span {
+    color: var(--fg-2);
+  }
+
+  .tool-list ul {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 9px;
+  }
+
+  .tool-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 8px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.022);
+  }
+
+  .tool-list code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-2);
+  }
+
+  .tool-list em {
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+
+  .tool-list .write em {
+    color: var(--blue-2);
+  }
+
+  .tool-list .locked em {
+    color: var(--amber);
+  }
+
+  .mentions {
+    padding: 14px;
+  }
+
+  .mentions-head {
+    font-size: 12px;
+    color: var(--fg-2);
+  }
+
+  .mentions-head b {
+    color: var(--blue-2);
+  }
+
+  .mention-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+
+  .mention {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    background: rgba(255, 255, 255, 0.02);
+    white-space: nowrap;
+  }
+
+  .mention-active {
+    border-color: rgba(96, 165, 250, 0.45);
+    background: var(--blue-soft);
+    color: var(--blue-2);
+  }
+
+  .mentions-foot {
+    margin-top: 11px;
+    font-size: 10.5px;
+    color: var(--faint);
+  }
+
+  @media (max-width: 960px) {
+    .agent-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .agent-visual {
+      position: static;
+    }
+  }
+</style>

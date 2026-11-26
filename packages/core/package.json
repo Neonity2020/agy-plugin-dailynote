@@ -1,0 +1,17 @@
+{
+  "name": "@daily-notes/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared SQLite WAL + FTS5 storage core, markdown codec, and attachment manager for Daily Notes.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  }
+}

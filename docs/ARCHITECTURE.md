@@ -39,38 +39,38 @@ flowchart TB
 
 ## 2. Antigravity 插件目录与清单规范
 
-### 2.1 仓库与插件目录结构
-为确保执行 `agy plugin install` 安装到本地 `~/.gemini/config/plugins/daily-notes/` 后即可**零额外依赖运行**，前端编译产物直接输出到 `sidecars/daily_notes/dist/`，运行时代码以打包后单文件或零外部依赖 ESM 组织：
+### 2.1 Monorepo 与插件目录结构
+仓库采用 **pnpm monorepo** 组织，将共享存储核心（`packages/core`）、可独立安装的插件本体（`packages/plugin`）与 Astro 落地页（`apps/marketing`）解耦。为确保执行 `agy plugin install ./packages/plugin` 安装到本地 `~/.gemini/config/plugins/daily-notes/` 后即可**零额外依赖运行**，构建脚本将前端编译至 `packages/plugin/sidecars/daily_notes/dist/`，并通过 `esbuild` 将 `@daily-notes/core` 与运行时依赖内联打包进 `packages/plugin/sidecars/daily_notes/main.mjs` 和 `packages/plugin/mcp/server.mjs`：
 
 ```text
-daily-notes/ (sidelist 仓库根目录)
-├── plugin.json                         # 必填：插件主清单
-├── README.md                           # 用户面向说明文档
-├── assets/
-│   └── logo.svg                        # 插件图标（>=128x128 透明背景方图，含约 10% 边距）
-├── mcp_config.json                     # MCP Server 注册配置
-├── rules/
-│   └── AGENTS.md                       # 插件启用期间生效的 Agent 协同约束
-├── skills/
-│   ├── daily-summary/
-│   │   └── SKILL.md                    # /daily-summary 工作流技能
-│   └── daily-capture/
-│       └── SKILL.md                    # /daily-capture 工作流技能
-├── sidecars/
-│   └── daily_notes/
-│       ├── sidecar.json                # 侧边栏 UI Sidecar 声明
-│       ├── main.mjs                    # SidecarApp 入口（HTTP API + 静态资源服务）
-│       └── dist/                       # Vite 构建的前端静态产物
-├── mcp/
-│   └── server.mjs                      # Stdio MCP Server 入口
-├── core/                               # Sidecar 与 MCP 共享核心逻辑（DB/Markdown/附件）
-│   ├── db.mjs
-│   ├── notes-service.mjs
-│   ├── markdown.mjs
-│   └── attachments.mjs
-├── web/                                # React + TypeScript + Vite + Tiptap 前端源码
-├── docs/                               # 本需求与设计文档目录
-└── package.json                        # 构建、类型检查与测试脚本
+agy-plugin-dailynote/ (Monorepo 根目录)
+├── pnpm-workspace.yaml
+├── package.json
+├── packages/
+│   ├── core/                                 # @daily-notes/core（纯 Node 零外部依赖）
+│   │   ├── package.json
+│   │   ├── src/                              # config/db/storage-adapter/markdown/attachments/notes-service
+│   │   └── tests/                            # core 单元与并发测试
+│   └── plugin/                               # @daily-notes/plugin（可独立安装的插件根目录）
+│       ├── plugin.json                       # 必填：插件主清单
+│       ├── assets/logo.svg                   # 插件图标（>=128x128 透明背景方图）
+│       ├── mcp_config.json                   # MCP Server 注册配置
+│       ├── rules/AGENTS.md                   # 插件启用期间生效的 Agent 协同约束
+│       ├── skills/                           # /daily-summary 与 /daily-capture 技能
+│       ├── sidecars/daily_notes/
+│       │   ├── sidecar.json                  # 侧边栏 UI Sidecar 声明
+│       │   ├── src/main.mjs                  # Sidecar 源码（导入 @daily-notes/core）
+│       │   ├── main.mjs                      # 打包产物（内联 @daily-notes/core）
+│       │   └── dist/                         # Vite 构建的前端经典 IIFE 静态产物
+│       ├── mcp/
+│       │   ├── src/server.mjs                # Stdio MCP 源码（导入 @daily-notes/core）
+│       │   └── server.mjs                    # 打包产物（内联 @daily-notes/core 与 SDK）
+│       ├── web/                              # React + TypeScript + Vite + Tiptap 前端源码
+│       ├── scripts/                          # 构建脚本（build-all / build-sidecar / build-mcp）
+│       └── tests/                            # 清单、Sidecar HTTP、MCP 与前端编解码测试
+├── apps/
+│   └── marketing/                            # @daily-notes/marketing（Astro 静态落地页）
+└── docs/                                     # 需求与架构设计文档
 ```
 
 > [!NOTE]

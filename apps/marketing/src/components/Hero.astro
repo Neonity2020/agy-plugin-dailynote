@@ -1,0 +1,894 @@
+---
+import Icon from './Icon.astro';
+import { DOWNLOAD_URL, REPO_NAME, REPO_SLUG, REPO_URL, VERSION, MIN_NODE } from '../config';
+---
+
+<section class="hero">
+  <div class="hero-glow" aria-hidden="true"></div>
+
+  <div class="container hero-grid">
+    <div class="hero-copy">
+      <p class="hero-badge" data-reveal>
+        <span class="dot"></span>
+        Antigravity 辅助侧边栏插件 · 本地优先 · MIT
+      </p>
+
+      <h1 data-reveal data-reveal-delay="60">
+        写下来，<br /><span class="grad">别切走。</span>
+      </h1>
+
+      <p class="hero-lead" data-reveal data-reveal-delay="120">
+        灵感、待办、踩坑记录，都该留在正在写代码的那块屏幕里。Daily Notes 把所见即所得的每日笔记放进
+        Antigravity 侧栏——打开即写、自动保存，数据只落在你本机的 SQLite。
+      </p>
+
+      <div class="hero-actions" data-reveal data-reveal-delay="180">
+        <a class="btn btn-primary" href={REPO_URL} target="_blank" rel="noopener noreferrer">
+          <Icon name="github" />
+          在 GitHub 获取
+        </a>
+        <a class="btn btn-ghost" href={DOWNLOAD_URL} target="_blank" rel="noopener noreferrer">
+          <Icon name="download" />
+          下载 ZIP
+        </a>
+      </div>
+
+      <ul class="hero-meta" data-reveal data-reveal-delay="240">
+        <li><Icon name="check" size={14} /> Node.js ≥ {MIN_NODE}</li>
+        <li><Icon name="check" size={14} /> 本地 SQLite + FTS5</li>
+        <li><Icon name="check" size={14} /> 零云端依赖</li>
+      </ul>
+    </div>
+
+    <div class="hero-visual" data-reveal data-reveal-delay="140">
+      <div class="app" role="img" aria-label="Daily Notes 在 Antigravity 侧边栏中的界面预览">
+        <div class="app-chrome">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="app-title">{REPO_NAME} / Local Plugin Installation Guide</span>
+          <span class="chrome-icons">
+            <Icon name="search" size={13} />
+            <Icon name="code" size={13} />
+          </span>
+        </div>
+
+        <div class="app-body">
+          <aside class="rail">
+            <span class="rail-item rail-active"><b>+</b> New Conversation</span>
+            <span class="rail-item"><Icon name="calendar" size={13} /> Automations</span>
+            <span class="rail-item"><Icon name="file" size={13} /> Customizations</span>
+            <span class="rail-label">Projects</span>
+            <span class="rail-item rail-project"><Icon name="package" size={13} /> {REPO_NAME}</span>
+            <span class="rail-item rail-sub">Local Plugin Installation Guide</span>
+            <span class="rail-item rail-sub">重新执行插件构建</span>
+            <span class="rail-item"><Icon name="file" size={13} /> novel-assist</span>
+          </aside>
+
+          <div class="chat">
+            <p class="chat-kicker">Worked for 3m <span>›</span></p>
+            <p class="chat-line">已提交并推送到 <code>origin/main</code>：</p>
+            <div class="commit">
+              <span class="commit-row"><b>Commit</b> 0cd8305 — feat: support Composer <code>@</code> referencing</span>
+              <span class="commit-row"><b>远程仓库</b> github.com/{REPO_SLUG}.git <span class="ok">✓</span></span>
+            </div>
+            <p class="chat-line chat-dim">
+              基于最新读取到的 2026-11-25 笔记（revision=80）简要提炼：今日核心进展为插件构建与 Markdown
+              渲染打通，待办已同步。
+            </p>
+            <div class="composer">
+              <span class="composer-text">Ask anything, <b>@</b> to mention, <b>/</b> for actions</span>
+              <span class="composer-foot">
+                <span class="model"><Icon name="sparkle" size={12} /> Orchestrator Gemini 4</span>
+                <span class="send">↑</span>
+              </span>
+            </div>
+          </div>
+
+          <div class="pane">
+            <div class="pane-tabs">
+              <span class="pane-tab pane-tab-active"><Icon name="calendar" size={12} /> 每日笔记</span>
+              <span class="pane-tab">每日笔记 · Daily Notes</span>
+            </div>
+
+            <div class="pane-head">
+              <span class="pane-nav">‹</span>
+              <span class="pane-date">2026-11-25 周三</span>
+              <span class="pane-nav">›</span>
+              <span class="pane-tools">
+                <Icon name="search" size={13} />
+                <Icon name="sparkle" size={13} class="tool-ai" />
+                <Icon name="code" size={13} />
+              </span>
+            </div>
+
+            <div class="pane-project">📁 {REPO_NAME} <span>×</span></div>
+
+            <div class="note">
+              <p class="note-title">每日笔记 <span class="note-tag">#DailyNotes</span></p>
+              <p class="note-h">基本构建完成</p>
+              <ul class="note-list">
+                <li><span class="box box-done"><Icon name="check" size={9} /></span> 插件加载</li>
+                <li><span class="box box-done"><Icon name="check" size={9} /></span> Markdown 渲染</li>
+              </ul>
+              <p class="note-h">Todos</p>
+              <ul class="note-list">
+                <li><span class="box"></span> 插件名称（待确认）</li>
+                <li><span class="box"></span> 支持在 composer 中 <b>@</b> 引用每日笔记</li>
+              </ul>
+              <p class="note-link">
+                参考 <span class="wikilink">[[2026-11-24]]</span> 的侧边栏约束，继续完善
+                <code>#sidebar</code> 布局。
+              </p>
+              <p class="note-code">
+                <span class="code-head"><i></i><i></i><i></i> mcp.json</span>
+                <span class="code-line"><em>"tools"</em>: <b>7</b> <span class="code-comment">// read · search · append</span></span>
+                <span class="code-line"><em>"resources"</em>: <b>5</b> <span class="code-comment">// daily-notes://…</span></span>
+              </p>
+            </div>
+
+            <div class="pane-foot">
+              <span class="saved"><Icon name="check" size={11} /> 已保存 07:03 PM · 34 字</span>
+              <span class="pane-foot-right">1/2 待办</span>
+            </div>
+
+            <div class="agent-toast">
+              <span class="agent-icon"><Icon name="sparkle" size={13} /></span>
+              <span>Agent 已更新这条笔记</span>
+              <span class="undo"><Icon name="undo" size={11} /> 撤销</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <span class="chip chip-1"><Icon name="shield" size={13} /> 写入前自动快照</span>
+      <span class="chip chip-2"><Icon name="database" size={13} /> WAL + FTS5</span>
+    </div>
+  </div>
+
+  <div class="stack-strip container" aria-label="技术栈">
+    <span>为 Antigravity 而建</span>
+    <span>·</span>
+    <span>Tiptap WYSIWYG</span>
+    <span>·</span>
+    <span>node:sqlite</span>
+    <span>·</span>
+    <span>Stdio MCP Server</span>
+    <span>·</span>
+    <span>MIT License</span>
+    <span>·</span>
+    <span class="ver">v{VERSION}</span>
+  </div>
+</section>
+
+<style>
+  .hero {
+    position: relative;
+    padding-top: clamp(56px, 7vw, 92px);
+    padding-bottom: 28px;
+    overflow: clip;
+  }
+
+  .hero-glow {
+    position: absolute;
+    top: -180px;
+    right: -80px;
+    width: 760px;
+    height: 620px;
+    background: radial-gradient(closest-side, rgba(37, 99, 235, 0.24), transparent);
+    filter: blur(20px);
+    pointer-events: none;
+  }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 0.88fr) minmax(0, 1.12fr);
+    gap: clamp(32px, 5vw, 64px);
+    align-items: center;
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 13px 7px 9px;
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 12.5px;
+    color: var(--fg-2);
+    letter-spacing: 0.01em;
+  }
+
+  .hero-badge .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 0 3px rgba(109, 179, 93, 0.16);
+  }
+
+  h1 {
+    margin-top: 22px;
+    font-size: clamp(42px, 6.2vw, 74px);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+    font-weight: 680;
+  }
+
+  .hero-lead {
+    margin-top: 24px;
+    max-width: 46ch;
+    color: var(--muted);
+    font-size: 16.5px;
+    line-height: 1.72;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 30px;
+  }
+
+  .hero-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    margin-top: 26px;
+    font-size: 12.5px;
+    color: var(--faint);
+  }
+
+  .hero-meta li {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .hero-meta svg {
+    color: var(--green);
+  }
+
+  /* ── App mockup ── */
+  .hero-visual {
+    position: relative;
+    min-width: 0;
+  }
+
+  .app {
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    border-radius: 13px;
+    background: #0d0f14;
+    overflow: hidden;
+    box-shadow:
+      0 40px 90px -30px rgba(0, 0, 0, 0.9),
+      0 0 0 1px rgba(0, 0, 0, 0.4),
+      0 0 80px -30px rgba(37, 99, 235, 0.4);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: #d7dce5;
+    transform: perspective(1600px) rotateY(-2.2deg) rotateX(0.8deg);
+    transform-origin: right center;
+  }
+
+  .app-chrome {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    background: #16181e;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    color: #9aa2af;
+  }
+
+  .lights {
+    display: flex;
+    gap: 5px;
+  }
+
+  .lights i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3a3f48;
+  }
+
+  .lights i:first-child {
+    background: #ff5f57;
+  }
+
+  .lights i:nth-child(2) {
+    background: #febc2e;
+  }
+
+  .lights i:nth-child(3) {
+    background: #28c840;
+  }
+
+  .app-title {
+    flex: 1;
+    text-align: center;
+    font-size: 10px;
+    color: #8d95a2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chrome-icons {
+    display: flex;
+    gap: 9px;
+    color: #767e8b;
+  }
+
+  .app-body {
+    display: grid;
+    grid-template-columns: 118px minmax(0, 0.92fr) minmax(0, 1.25fr);
+    min-height: 452px;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 8px;
+    background: #0f1116;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    color: #aeb5c0;
+    font-size: 9.5px;
+  }
+
+  .rail-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 6px;
+    border-radius: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  .rail-item b {
+    font-size: 11px;
+  }
+
+  .rail-active {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+
+  .rail-label {
+    margin-top: 8px;
+    padding: 2px 6px;
+    font-size: 8px;
+    color: #6f7784;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  .rail-project {
+    background: rgba(59, 130, 246, 0.12);
+    color: #bfdbfe;
+  }
+
+  .rail-sub {
+    color: #8d95a2;
+    padding-block: 4px;
+  }
+
+  .chat {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding: 14px 13px;
+    background: #0b0d11;
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    color: #b8bfcb;
+  }
+
+  .chat-kicker {
+    color: #7e8794;
+    font-size: 9.5px;
+  }
+
+  .chat-kicker span {
+    opacity: 0.6;
+  }
+
+  .chat-line {
+    font-size: 9.5px;
+    line-height: 1.6;
+  }
+
+  .chat-line code {
+    font-family: var(--mono);
+    background: rgba(255, 255, 255, 0.08);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 9px;
+  }
+
+  .chat-dim {
+    color: #8f97a4;
+  }
+
+  .commit {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    background: #12151b;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    font-family: var(--mono);
+    font-size: 8.5px;
+    line-height: 1.6;
+    color: #9fa7b4;
+    overflow: hidden;
+  }
+
+  .commit b {
+    color: #d9dee6;
+    font-weight: 500;
+  }
+
+  .commit code {
+    background: transparent;
+    padding: 0;
+    color: #93c5fd;
+  }
+
+  .ok {
+    color: #6db35d;
+  }
+
+  .composer {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    background: #14171e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .composer-text {
+    font-size: 9px;
+    color: #6f7784;
+  }
+
+  .composer-text b {
+    color: #9da5b2;
+  }
+
+  .composer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .model {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 8px;
+    color: #8b93a0;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 999px;
+    padding: 2px 7px 2px 4px;
+  }
+
+  .model svg {
+    color: #93c5fd;
+  }
+
+  .send {
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: #e7e9ee;
+    color: #111;
+    font-size: 9px;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+  }
+
+  /* ── Right pane ── */
+  .pane {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: #0f1116;
+    min-width: 0;
+  }
+
+  .pane-tabs {
+    display: flex;
+    gap: 2px;
+    padding: 6px 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: #8d95a2;
+    font-size: 8.5px;
+    overflow: hidden;
+  }
+
+  .pane-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 8px;
+    border-radius: 5px 5px 0 0;
+    white-space: nowrap;
+  }
+
+  .pane-tab-active {
+    background: #1a1d24;
+    color: #f0f2f6;
+  }
+
+  .pane-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+    color: #cbd2dd;
+  }
+
+  .pane-nav {
+    color: #8b93a0;
+    font-size: 12px;
+    line-height: 1;
+  }
+
+  .pane-date {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+
+  .pane-tools {
+    margin-left: auto;
+    display: flex;
+    gap: 9px;
+    color: #7f8794;
+  }
+
+  .tool-ai {
+    color: #93c5fd;
+  }
+
+  .pane-project {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: #14171d;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 8.5px;
+    color: #98a1ae;
+  }
+
+  .note {
+    padding: 12px 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .note-title {
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: #f2f4f8;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .note-tag {
+    font-size: 11px;
+    font-weight: 500;
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.14);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  .note-h {
+    font-size: 11px;
+    font-weight: 650;
+    color: #e7eaf0;
+    margin-top: 3px;
+  }
+
+  .note-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 9.5px;
+    color: #b5bcc8;
+  }
+
+  .note-list li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .note-list b {
+    color: #93c5fd;
+  }
+
+  .box {
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    border: 1.2px solid #5c6472;
+    display: grid;
+    place-items: center;
+    flex: none;
+  }
+
+  .box-done {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
+  }
+
+  .note-link {
+    margin-top: 3px;
+    font-size: 9.5px;
+    color: #a7aeba;
+    line-height: 1.7;
+  }
+
+  .note-link code {
+    font-family: var(--mono);
+    font-size: 8.5px;
+    color: #93c5fd;
+  }
+
+  .wikilink {
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.13);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-family: var(--mono);
+    font-size: 8.5px;
+    white-space: nowrap;
+  }
+
+  .note-code {
+    margin-top: 3px;
+    display: flex;
+    flex-direction: column;
+    border-radius: 5px;
+    background: #080a0e;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 5px 7px 6px;
+    font-family: var(--mono);
+    font-size: 8px;
+    line-height: 1.8;
+    color: #b6becb;
+    overflow: hidden;
+  }
+
+  .code-head {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    color: #6e7683;
+    font-size: 7.5px;
+    margin-bottom: 2px;
+  }
+
+  .code-head i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #343a44;
+  }
+
+  .code-line em {
+    color: #93c5fd;
+    font-style: normal;
+  }
+
+  .code-line b {
+    color: #f0c674;
+    font-weight: 600;
+  }
+
+  .code-comment {
+    color: #5f6773;
+  }
+
+  .pane-foot {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.055);
+    font-size: 8px;
+    color: #747c89;
+  }
+
+  .saved {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #6db35d;
+  }
+
+  .pane-foot-right {
+    color: #6f7784;
+  }
+
+  .agent-toast {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 34px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    background: #1b2333;
+    border: 1px solid rgba(96, 165, 250, 0.36);
+    box-shadow: 0 10px 24px -10px rgba(0, 0, 0, 0.8);
+    font-size: 8.5px;
+    color: #dbe4f3;
+  }
+
+  .agent-icon {
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
+    border-radius: 5px;
+    background: rgba(59, 130, 246, 0.24);
+    color: #93c5fd;
+    flex: none;
+  }
+
+  .undo {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: #93c5fd;
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+    padding-left: 7px;
+    white-space: nowrap;
+  }
+
+  .chip {
+    position: absolute;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 12px;
+    border-radius: 9px;
+    background: rgba(16, 19, 26, 0.9);
+    border: 1px solid var(--line-strong);
+    backdrop-filter: blur(10px);
+    font-size: 11.5px;
+    color: var(--fg-2);
+    box-shadow: 0 18px 40px -18px rgba(0, 0, 0, 0.9);
+    white-space: nowrap;
+  }
+
+  .chip svg {
+    color: var(--blue-2);
+  }
+
+  .chip-1 {
+    left: 18px;
+    top: -30px;
+    animation: float 7s ease-in-out infinite;
+  }
+
+  .chip-2 {
+    right: -14px;
+    bottom: -30px;
+    animation: float 8s ease-in-out infinite reverse;
+  }
+
+  @keyframes float {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-9px);
+    }
+  }
+
+  .stack-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-top: clamp(44px, 6vw, 72px);
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  .stack-strip span:nth-child(even) {
+    opacity: 0.4;
+  }
+
+  .stack-strip .ver {
+    margin-left: auto;
+    color: var(--blue-2);
+    opacity: 1;
+  }
+
+  @media (max-width: 1080px) {
+    .hero-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .hero-copy {
+      max-width: 640px;
+    }
+
+    .app {
+      transform: none;
+    }
+
+    .app-body {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+    }
+
+    .rail {
+      display: none;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .app-body {
+      grid-template-columns: 1fr;
+      min-height: 0;
+    }
+
+    .chat {
+      display: none;
+    }
+
+    .pane {
+      min-height: 430px;
+    }
+
+    .hero-visual {
+      margin-bottom: 34px;
+    }
+
+    .chip-1 {
+      left: 8px;
+      top: auto;
+      bottom: -30px;
+    }
+
+    .chip-2 {
+      display: none;
+    }
+
+    .stack-strip .ver {
+      margin-left: 0;
+    }
+  }
+</style>

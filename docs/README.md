@@ -10,7 +10,7 @@
 
 | 维度 | 锁定决策 | 说明 |
 | :--- | :--- | :--- |
-| **插件名称与标识** | **Daily Notes（每日笔记）** / `daily-notes` | 基于当前 `sidelist` 仓库作为独立 Antigravity 插件开发，UI 展示名「每日笔记」 |
+| **插件名称与标识** | **Daily Notes（每日笔记）** / `daily-notes` | 基于 `agy-plugin-dailynote` pnpm monorepo（`packages/core` + `packages/plugin` + `apps/marketing`）开发，UI 展示名「每日笔记」 |
 | **笔记作用域** | **全局按本地自然日共享**（`YYYY-MM-DD`） | 每天 1 篇整页自由文档，跨项目通用；支持正文自然 `#标签` 自动索引与顶部一键「关联当前项目」 |
 | **交互与导航** | **顶部日期条 + 折叠式迷你日历 + 搜索入口** | 适配 320px–480px 窄侧边栏，不设常驻多栏目录树 |
 | **WYSIWYG 编辑器** | **React + TypeScript + Vite + Tiptap (ProseMirror)** | 支持 Markdown 快捷语法即时渲染、选中悬浮工具栏（Bubble Menu）、`/` 斜杠插入菜单 |
