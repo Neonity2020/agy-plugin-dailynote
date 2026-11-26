@@ -4,7 +4,7 @@ import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
-import Table from '@tiptap/extension-table';
+import Table, { TableView } from '@tiptap/extension-table';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import TableRow from '@tiptap/extension-table-row';
@@ -162,8 +162,10 @@ export function NoteEditor({
       TaskItem.configure({
         nested: true,
       }),
-      Table.configure({
-        resizable: false,
+      Table.extend({
+        addNodeView() {
+          return ({ node }) => new TableView(node, this.options.cellMinWidth);
+        },
       }),
       TableRow,
       TableHeader,

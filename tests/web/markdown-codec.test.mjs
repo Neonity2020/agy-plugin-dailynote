@@ -46,7 +46,7 @@ test('markdownCodec preserves semantics across 5 consecutive WYSIWYG <-> Source 
       '| 模块 | 状态 | 备注 |',
       '| --- | --- | --- |',
       '| Core | Done | WAL \\| FTS5 |',
-      '| Web | WIP | Tiptap v2 |',
+      '| Web | WIP | before![cell](/api/attachments/att_1234567890ab)after |',
       '',
       '![架构图](/api/attachments/att_1234567890ab)',
       '',
@@ -77,6 +77,7 @@ test('markdownCodec preserves semantics across 5 consecutive WYSIWYG <-> Source 
       currentMd = nextMd;
     }
 
+    assert.ok(currentMd.includes('before![cell](/api/attachments/att_1234567890ab)after'));
     assert.ok(currentMd.includes('[[2026-11-24]]'));
     assert.ok(currentMd.includes('==重点高亮=='));
     assert.ok(currentMd.includes('- [x] 完成数据库 Schema'));

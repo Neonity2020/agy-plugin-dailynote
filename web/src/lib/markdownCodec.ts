@@ -322,11 +322,11 @@ function convertTable(tableNode: Table): TiptapNode {
   const rows = tableNode.children.map((row: TableRow, rowIndex: number) => {
     const cellType = rowIndex === 0 ? 'tableHeader' : 'tableCell';
     const cells = row.children.map((cell: TableCell) => {
-      const inline = convertPhrasing(cell.children);
+      const blocks = convertParagraph({ type: 'paragraph', children: cell.children });
       return {
         type: cellType,
         attrs: { colspan: 1, rowspan: 1, colwidth: null },
-        content: [inline.length ? { type: 'paragraph', content: inline } : { type: 'paragraph' }],
+        content: blocks,
       };
     });
     return {
@@ -508,10 +508,16 @@ function serializeTable(node: TiptapNode): string {
   const matrix: string[][] = rows.map((row) =>
     (row.content || []).map((cell) => {
       const cellBlocks = cell.content || [];
-      const text = cellBlocks
-        .map((blk) => serializeInline(blk.content, true))
-        .filter((s) => s.length > 0)
-        .join('<br>');
+      let text = '';
+      let previousParagraph = false;
+      for (const block of cellBlocks) {
+        const isParagraph = block.type === 'paragraph';
+        const value = serializeInline(block.type === 'image' ? [block] : block.content, true);
+        if (!value) continue;
+        if (previousParagraph && isParagraph) text += '<br>';
+        text += value;
+        previousParagraph = isParagraph;
+      }
       return text.replace(/\|/g, '\\|').replace(/\n/g, '<br>');
     }),
   );

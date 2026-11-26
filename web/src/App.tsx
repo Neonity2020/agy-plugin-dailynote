@@ -36,7 +36,7 @@ import type {
 } from './types';
 
 const AUTOSAVE_DEBOUNCE_MS = 500;
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 750;
 const AGENT_UNDO_TTL_MS = 15000;
 
 export function App() {
@@ -264,7 +264,8 @@ export function App() {
       if (!isValidDateStr(targetDate) || targetDate === currentDateRef.current) {
         return;
       }
-      await flushSave(false);
+      const saved = await flushSave(false);
+      if (dirtyRef.current && saved?.content_md !== contentMdRef.current) return;
       if (pushHistory) {
         const prev = currentDateRef.current;
         setHistoryStack((stack) => (stack[stack.length - 1] === prev ? stack : [...stack, prev]));
@@ -277,12 +278,13 @@ export function App() {
   const handleGoBack = useCallback(async () => {
     if (historyStack.length === 0) return;
     const prevDate = historyStack[historyStack.length - 1];
-    await flushSave(false);
+    const saved = await flushSave(false);
+    if (dirtyRef.current && saved?.content_md !== contentMdRef.current) return;
     setHistoryStack((stack) => stack.slice(0, -1));
     setCurrentDate(prevDate);
   }, [flushSave, historyStack]);
 
-  // Poll /api/note/meta every 2s when visible, plus immediate check on window focus
+  // Poll /api/note/meta while visible, plus immediate check on window focus
   const checkExternalUpdates = useCallback(async () => {
     if (document.visibilityState !== 'visible') return;
     const targetDate = currentDateRef.current;

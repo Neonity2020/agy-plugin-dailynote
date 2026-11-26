@@ -2,6 +2,8 @@ export type ThemeScheme = 'light' | 'dark';
 
 export function detectThemeFromRoot(): ThemeScheme {
   if (typeof document === 'undefined') return 'light';
+  const systemTheme = window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (!getComputedStyle(document.documentElement).getPropertyValue('--background').trim()) return systemTheme;
   const probe = document.createElement('span');
   probe.style.cssText = 'position:absolute;visibility:hidden;color:var(--background, #f7f7f8)';
   document.documentElement.appendChild(probe);
@@ -10,7 +12,7 @@ export function detectThemeFromRoot(): ThemeScheme {
 
   const nums = (computed.match(/[\d.]+/g) || []).map(Number);
   if (nums.length < 3) {
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return systemTheme;
   }
   const scale = computed.startsWith('color(') ? 1 : 255;
   const [r, g, b] = nums.slice(0, 3).map((v) => v / scale);

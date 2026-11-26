@@ -47,6 +47,8 @@ test('Antigravity plugin manifests, logo, skills, rules, and build artifacts con
   const mcpJson = readJson('mcp_config.json');
   assert.deepEqual(mcpJson.mcpServers?.['daily-notes']?.args, ['${PLUGIN_ROOT}/mcp/server.mjs']);
 
+  assert.equal(mcpJson.mcpServers['daily-notes'].env?.DAILY_NOTES_DATA_DIR, undefined);
+
   const rulesText = fs.readFileSync(path.join(rootDir, 'rules', 'AGENTS.md'), 'utf-8');
   assert.ok(!rulesText.trimStart().startsWith('---'), 'rules/AGENTS.md must NOT contain YAML frontmatter');
 
