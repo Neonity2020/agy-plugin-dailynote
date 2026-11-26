@@ -1,9 +1,6 @@
 {
   "command": "node",
   "args": ["main.mjs"],
-  "env": {
-    "DAILY_NOTES_DATA_DIR": "${env:DAILY_NOTES_DATA_DIR}"
-  },
   "restart_policy": "always",
   "display_name": "每日笔记",
   "description": "所见即所得的侧边栏每日笔记，本地 SQLite 持久化并支持与 Agent 双向协同。",

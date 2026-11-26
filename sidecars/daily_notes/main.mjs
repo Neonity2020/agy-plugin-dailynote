@@ -16,9 +16,9 @@ const MAX_UPLOAD_BYTES = 15 * 1024 * 1024; // 15 MB (covers 10 MB image + base64
 
 const STATIC_MIME = {
   '.html': 'text/html; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.mjs': 'application/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript',
+  '.mjs': 'application/javascript',
+  '.css': 'text/css',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -29,6 +29,7 @@ const STATIC_MIME = {
   '.woff2': 'font/woff2',
   '.ico': 'image/x-icon',
 };
+const TEXT_STATIC_EXTS = new Set(['.html', '.js', '.mjs', '.css', '.svg', '.json']);
 
 export class StandaloneResponse {
   constructor(body, { status = 200, contentType = 'text/plain; charset=utf-8', headers = {} } = {}) {
@@ -652,7 +653,10 @@ async function runMain() {
   let sdk = null;
   try {
     sdk = await import('sidecar_sdk');
-  } catch {
+  } catch (err) {
+    if (process.env.ANTIGRAVITY_SIDECAR_WEB_PORT || process.env.ANTIGRAVITY_EXECUTABLE_DATA_DIR) {
+      console.error('[daily-notes sidecar] sidecar_sdk import failed:', err?.message || err);
+    }
     sdk = null;
   }
 
@@ -677,10 +681,16 @@ async function runMain() {
 
     for (const file of walkDistFiles(DEFAULT_DIST_DIR)) {
       if (file.rel === 'index.html') continue;
+      const ext = path.extname(file.fullPath).toLowerCase();
       const mime = getMimeType(file.fullPath);
+      const isText = TEXT_STATIC_EXTS.has(ext);
       app.api(
         `/${file.rel}`,
-        () => new Response(fs.readFileSync(file.fullPath), { contentType: mime }),
+        () =>
+          new Response(
+            isText ? fs.readFileSync(file.fullPath, 'utf-8') : fs.readFileSync(file.fullPath),
+            { contentType: mime },
+          ),
         'GET',
       );
     }
@@ -719,10 +729,17 @@ async function runMain() {
   process.on('SIGTERM', shutdown);
 }
 
-const isMainModule =
-  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+function isExecutedDirectly() {
+  if (!process.argv[1]) return false;
+  const selfPath = fileURLToPath(import.meta.url);
+  try {
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(selfPath);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(selfPath);
+  }
+}
 
-if (isMainModule) {
+if (isExecutedDirectly()) {
   runMain().catch((err) => {
     console.error('[daily-notes sidecar] fatal startup error:', err);
     process.exit(1);

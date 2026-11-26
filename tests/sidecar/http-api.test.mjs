@@ -19,6 +19,16 @@ test('Sidecar HTTP server serves built UI, exact-path routes, RESTful routes, mu
     const preloadRes = await fetch(`${srv.baseUrl}/preload.js`);
     assert.equal(preloadRes.status, 200);
 
+    const appJsRes = await fetch(`${srv.baseUrl}/app.js`);
+    assert.equal(appJsRes.status, 200);
+    assert.ok(appJsRes.headers.get('content-type')?.includes('javascript'));
+    assert.ok((await appJsRes.text()).length > 0);
+
+    const stylesCssRes = await fetch(`${srv.baseUrl}/styles.css`);
+    assert.equal(stylesCssRes.status, 200);
+    assert.ok(stylesCssRes.headers.get('content-type')?.includes('text/css'));
+    assert.ok((await stylesCssRes.text()).length > 0);
+
     // 2. Exact-path health & lazy note GET
     const health = await (await fetch(`${srv.baseUrl}/api/health`)).json();
     assert.equal(health.ok, true);

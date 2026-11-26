@@ -40,6 +40,7 @@ test('Antigravity plugin manifests, logo, skills, rules, and build artifacts con
   const sidecarJson = readJson('sidecars/daily_notes/sidecar.json');
   assert.equal(sidecarJson.command, 'node');
   assert.deepEqual(sidecarJson.args, ['main.mjs']);
+  assert.equal(sidecarJson.env?.DAILY_NOTES_DATA_DIR, undefined);
   assert.equal(sidecarJson.has_web_ui, true);
   assert.equal(sidecarJson.agent_permissions?.allows_user_interactions, true);
   assert.equal(sidecarJson.ui_config?.views?.[0]?.entrypoint, 'SIDECAR_UI_ENTRYPOINT_AUX_PANE');
@@ -62,7 +63,18 @@ test('Antigravity plugin manifests, logo, skills, rules, and build artifacts con
     assert.ok(skillText.includes('description:'));
   }
 
-  // Built artifacts must exist
-  assert.ok(fs.existsSync(path.join(rootDir, 'sidecars', 'daily_notes', 'dist', 'index.html')));
+  // Built artifacts must exist and use classic non-module assets compatible with Sidecar Aux Pane
+  const distIndexPath = path.join(rootDir, 'sidecars', 'daily_notes', 'dist', 'index.html');
+  assert.ok(fs.existsSync(distIndexPath));
+  assert.ok(fs.existsSync(path.join(rootDir, 'sidecars', 'daily_notes', 'dist', 'app.js')));
+  assert.ok(fs.existsSync(path.join(rootDir, 'sidecars', 'daily_notes', 'dist', 'styles.css')));
+
+  const distIndexHtml = fs.readFileSync(distIndexPath, 'utf-8');
+  assert.ok(distIndexHtml.includes('<script src="/preload.js"></script>'));
+  assert.ok(distIndexHtml.includes('<link rel="stylesheet" href="/styles.css"'));
+  assert.ok(distIndexHtml.includes('<script src="/app.js"></script>'));
+  assert.ok(!distIndexHtml.includes('type="module"'), 'dist/index.html must not use type="module"');
+  assert.ok(!distIndexHtml.includes('crossorigin'), 'dist/index.html must not use crossorigin');
+
   assert.ok(fs.existsSync(path.join(rootDir, 'mcp', 'server.mjs')));
 });
