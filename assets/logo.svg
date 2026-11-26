@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Daily Notes">
+  <rect x="13" y="13" width="102" height="102" rx="20" fill="#111827"/>
+  <rect x="19" y="19" width="90" height="90" rx="15" fill="none" stroke="#F9FAFB" stroke-width="4" stroke-opacity="0.35"/>
+  <path d="M35 44h58" stroke="#F9FAFB" stroke-width="7" stroke-linecap="round"/>
+  <path d="M35 62h58" stroke="#F9FAFB" stroke-width="7" stroke-linecap="round" stroke-opacity="0.8"/>
+  <path d="M35 80h32" stroke="#F9FAFB" stroke-width="7" stroke-linecap="round" stroke-opacity="0.6"/>
+  <path d="M74 80l7 8 15-17" fill="none" stroke="#34D399" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

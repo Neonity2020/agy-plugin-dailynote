@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "daily-notes": {
+      "command": "node",
+      "args": ["${PLUGIN_ROOT}/mcp/server.mjs"],
+      "env": {
+        "DAILY_NOTES_DATA_DIR": "${env:DAILY_NOTES_DATA_DIR}"
+      }
+    }
+  }
+}

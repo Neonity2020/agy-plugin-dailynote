@@ -1,0 +1,13 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "daily-notes",
+  "displayName": "Daily Notes",
+  "version": "0.1.0",
+  "description": "在 Antigravity 侧边栏提供所见即所得的每日笔记编辑体验，数据保存在本地 SQLite，并支持与 Agent 安全双向协同。",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "帮我总结今天的每日笔记和未完成待办",
+    "把刚才讨论的结论和修改点记录到今天的笔记里",
+    "汇总最近 7 天每日笔记中尚未完成的任务清单"
+  ]
+}
