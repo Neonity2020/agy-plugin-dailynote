@@ -64,6 +64,7 @@ interface NoteEditorProps {
   onSendSelectionToChat: (selectedText: string) => void;
   onOpenLightbox: (src: string, alt: string) => void;
   onNotify: (message: string) => void;
+  onImageUploadStarted: (upload: Promise<void>) => void;
 }
 
 export function NoteEditor({
@@ -79,8 +80,9 @@ export function NoteEditor({
   onSendSelectionToChat,
   onOpenLightbox,
   onNotify,
+  onImageUploadStarted,
 }: NoteEditorProps) {
-  const [uploading, setUploading] = useState(false);
+  const [uploadCount, setUploadCount] = useState(0);
   const [inTable, setInTable] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -109,35 +111,38 @@ export function NoteEditor({
   const initialDoc = useMemo(() => markdownToDoc(contentMd), []);
 
   const handleImageUpload = useCallback(
-    async (file: File, insertAtPos?: number, editorInstance?: ReturnType<typeof useEditor>) => {
+    (file: File, insertAtPos?: number) => {
       if (!ALLOWED_IMAGE_MIME.has(file.type)) {
         onNotifyRef.current('仅支持上传 PNG、JPEG、WebP 或 GIF 图片');
         return;
       }
-      setUploading(true);
-      try {
-        const res = await uploadAttachment(file, noteDateRef.current);
-        const ed = editorInstance;
-        if (ed) {
-          const chain = ed.chain().focus();
-          if (typeof insertAtPos === 'number') {
+      const date = noteDateRef.current;
+      const editor = editorRef.current;
+      if (!editor) return;
+
+      setUploadCount((count) => count + 1);
+      const upload = (async () => {
+        try {
+          const attachment = await uploadAttachment(file, date);
+          if (editor.isDestroyed || noteDateRef.current !== date) return;
+
+          const chain = editor.chain().focus();
+          if (insertAtPos !== undefined) {
             chain.setTextSelection(insertAtPos);
           }
-          chain
-            .setImage({
-              src: res.render_url,
-              alt: res.orig_name,
-            })
-            .run();
+          chain.setImage({
+            src: attachment.render_url,
+            alt: attachment.orig_name,
+          }).run();
+        } catch (err) {
+          onNotifyRef.current(err instanceof Error ? err.message : '图片上传失败');
+        } finally {
+          setUploadCount((count) => count - 1);
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : '图片上传失败';
-        onNotifyRef.current(msg);
-      } finally {
-        setUploading(false);
-      }
+      })();
+      onImageUploadStarted(upload);
     },
-    [],
+    [onImageUploadStarted],
   );
 
   const editor = useEditor({
@@ -225,7 +230,7 @@ export function NoteEditor({
           const imageFile = Array.from(items).find((f) => f.type.startsWith('image/'));
           if (imageFile) {
             event.preventDefault();
-            void handleImageUpload(imageFile, view.state.selection.from, editorRef.current);
+            handleImageUpload(imageFile, view.state.selection.from);
             return true;
           }
         }
@@ -250,7 +255,7 @@ export function NoteEditor({
 
         event.preventDefault();
         const coords = view.posAtCoords({ left: event.clientX, top: event.clientY });
-        void handleImageUpload(imageFile, coords?.pos, editorRef.current);
+        handleImageUpload(imageFile, coords?.pos);
         return true;
       },
     },
@@ -279,9 +284,7 @@ export function NoteEditor({
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (file && editor) {
-      void handleImageUpload(file, undefined, editor);
-    }
+    if (file) handleImageUpload(file);
   };
 
   return (
@@ -294,7 +297,7 @@ export function NoteEditor({
         onChange={handleFileInputChange}
       />
 
-      {uploading && <div className="dn-upload-pill">⏳ 正在保存图片到本地…</div>}
+      {uploadCount > 0 && <div className="dn-upload-pill">⏳ 正在保存图片到本地…</div>}
 
       {!sourceMode && editor && inTable && (
         <div className="dn-table-toolbar" role="toolbar" aria-label="表格操作">

@@ -107,16 +107,24 @@ export const DateWikilink = Node.create<DateWikilinkOptions>({
       dom.title = `跳转到 ${currentDate}`;
       dom.textContent = `📅 ${currentDate}`;
 
-      dom.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (isValidDateStr(currentDate)) {
-          onNavigateDate(currentDate);
-        }
+      const activate = (event: Event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isValidDateStr(currentDate)) onNavigateDate(currentDate);
+      };
+
+      // Keep the editor from moving its selection and scrolling before the click lands.
+      dom.addEventListener('mousedown', (event) => {
+        if (event.button === 0) event.preventDefault();
+      });
+      dom.addEventListener('click', activate);
+      dom.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') activate(event);
       });
 
       return {
         dom,
+        stopEvent: (event) => event.type === 'mousedown' || event.type === 'click',
         update(updatedNode) {
           if (updatedNode.type.name !== 'dateWikilink') return false;
           currentDate = String(updatedNode.attrs.date || '');

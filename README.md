@@ -25,7 +25,7 @@ agy-plugin-dailynote/
 
 ## 本地开发与构建
 
-> 运行环境要求：Node.js `>= 22.5.0`（支持原生 `node:sqlite` 与 FTS5 `trigram`）与 `pnpm`（可通过 `corepack enable` 启用）。
+> 运行环境要求：Node.js `>= 22.23.4`（支持原生 `node:sqlite` 与 FTS5 `trigram`）与 `pnpm`（可通过 `corepack enable` 启用）。
 
 ```bash
 # 安装整个工作区依赖

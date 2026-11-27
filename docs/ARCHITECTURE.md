@@ -165,7 +165,7 @@ agy-plugin-dailynote/ (Monorepo 根目录)
 - **Sidecar 框架**：直接通过 Antigravity 内置 loader 引入 `import { SidecarApp, Response } from 'sidecar_sdk'`（参考内置 `swarm_board` 模式）；同时兼容无 `sidecar_sdk` 时的独立 HTTP 启动模式方便脱离客户端开发调试。
 - **SQLite 驱动（`StorageAdapter` 抽象）**：
   - 优先采用 Node.js 原生内置 **`node:sqlite`（`DatabaseSync`）**——已在当前宿主机 `Node v24.22.2` 与 `SQLite 3.54.0` 验证原生支持 `FTS5` 与 `trigram` 分词器，零原生 C++ 编译依赖、跨 macOS/Linux/Windows 架构迁移最稳健。
-  - **M1 实施前置检查**：M1 第一步须实测 Antigravity 内置拉起 Sidecar 与 MCP 的 Node 运行时版本是否 `>= 22.5.0`（支持 `node:sqlite`）。若客户端内置 Node 版本低于 `22.5.0`，通过 `StorageAdapter` 抽象层无痛降级为预打包的 `better-sqlite3`（或自动探测系统较新 `node`），上层 `notes-service.mjs` 与 SQL 逻辑保持 100% 不变。
+  - **运行时要求**：工作区要求 Node.js `>= 22.23.4`，与营销站 Astro 的最低版本一致。Sidecar 与 MCP 通过清单里的 `node` 命令启动，安装时需确认 Antigravity 能找到受支持的版本。
 - **MCP SDK**：使用 `@modelcontextprotocol/sdk`（`McpServer` + `StdioServerTransport`），构建期通过 `esbuild` 将 `mcp/server.mjs` 及其依赖打包为独立可执行的单个 `.mjs` 文件（或随附精简运行时），避免用户安装插件后还要手动 `npm install`。
 
 ---

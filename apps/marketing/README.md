@@ -1,6 +1,6 @@
 # Daily Notes — Landing Page
 
-Daily Notes 插件的营销落地页，基于 [Astro](https://astro.build) 静态构建，无客户端框架运行时。
+Daily Notes 插件的营销落地页，基于 [Astro](https://astro.build) 静态构建，无客户端框架运行时。构建需要 Node.js `>= 22.23.4`。
 
 ## 开发
 

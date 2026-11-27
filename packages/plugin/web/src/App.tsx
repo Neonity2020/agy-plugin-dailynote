@@ -45,6 +45,7 @@ export function App() {
   const [historyStack, setHistoryStack] = useState<string[]>([]);
 
   const [note, setNote] = useState<DailyNote | null>(null);
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const [contentMd, setContentMd] = useState('');
   const [syncVersion, setSyncVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
@@ -72,6 +73,8 @@ export function App() {
   const agentUndoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingPromiseRef = useRef<Promise<DailyNote | null> | null>(null);
+  const pendingImageUploads = useRef(new Set<Promise<void>>());
+  const navigationRequestRef = useRef(0);
 
   // Refs for reading fresh state inside async callbacks / listeners
   const currentDateRef = useRef(currentDate);
@@ -80,11 +83,20 @@ export function App() {
   const noteRef = useRef(note);
   const conflictRef = useRef(conflict);
 
-  currentDateRef.current = currentDate;
-  contentMdRef.current = contentMd;
-  dirtyRef.current = dirty;
-  noteRef.current = note;
-  conflictRef.current = conflict;
+  const updateNote = useCallback((next: DailyNote) => {
+    noteRef.current = next;
+    setNote(next);
+  }, []);
+
+  const updateConflict = useCallback((next: ConflictState | null) => {
+    conflictRef.current = next;
+    setConflict(next);
+  }, []);
+
+  const trackImageUpload = useCallback((upload: Promise<void>) => {
+    pendingImageUploads.current.add(upload);
+    void upload.then(() => pendingImageUploads.current.delete(upload));
+  }, []);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -119,11 +131,14 @@ export function App() {
 
   const applyServerNote = useCallback(
     (serverNote: DailyNote, { showAgentUndo = false } = {}) => {
-      setNote(serverNote);
+      if (serverNote.date !== currentDateRef.current) return;
+      updateNote(serverNote);
+      contentMdRef.current = serverNote.content_md;
+      dirtyRef.current = false;
       setContentMd(serverNote.content_md);
       setSyncVersion((v) => v + 1);
       setDirty(false);
-      setConflict(null);
+      updateConflict(null);
       setSaveStatus(serverNote.exists && serverNote.content_md.trim() ? 'saved' : 'idle');
 
       setKnownDates((prev) => {
@@ -141,34 +156,37 @@ export function App() {
         setAgentUndoAvailable(false);
       }
     },
-    [],
+    [updateConflict, updateNote],
   );
 
-  const loadDate = useCallback(
-    async (date: string) => {
-      try {
-        const loaded = await fetchNote(date);
-        if (currentDateRef.current !== date) return;
-        applyServerNote(loaded, { showAgentUndo: false });
-        void refreshGlobalMetadata(date.slice(0, 7));
-      } catch (err) {
-        showToast(err instanceof Error ? err.message : '加载笔记失败');
-      }
-    },
-    [applyServerNote, refreshGlobalMetadata, showToast],
-  );
+  const loadInitialNote = useCallback(async () => {
+    const date = currentDateRef.current;
+    setInitialLoadFailed(false);
+    try {
+      const loaded = await fetchNote(date);
+      if (noteRef.current) return;
+      applyServerNote(loaded);
+      void refreshGlobalMetadata(date.slice(0, 7));
+    } catch (err) {
+      if (noteRef.current) return;
+      setInitialLoadFailed(true);
+      showToast(err instanceof Error ? err.message : '加载笔记失败');
+    }
+  }, [applyServerNote, refreshGlobalMetadata, showToast]);
 
   // Flush pending local edits immediately before navigation / toggle / blur / export
   const flushSave = useCallback(
     async (force = false): Promise<DailyNote | null> => {
+      const targetDate = currentDateRef.current;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
       }
 
-      if (savingPromiseRef.current) {
+      while (savingPromiseRef.current) {
         await savingPromiseRef.current;
       }
+      if (currentDateRef.current !== targetDate || !noteRef.current) return null;
 
       if (!dirtyRef.current && !force) {
         return noteRef.current;
@@ -177,9 +195,8 @@ export function App() {
         return null;
       }
 
-      const targetDate = currentDateRef.current;
       const mdToSave = contentMdRef.current;
-      const expectedRev = noteRef.current?.revision ?? 0;
+      const expectedRev = noteRef.current.revision;
 
       const task = (async () => {
         setSaveStatus('saving');
@@ -191,13 +208,14 @@ export function App() {
             force,
           });
           if (currentDateRef.current === targetDate) {
-            setNote(saved);
+            updateNote(saved);
             // Only clear dirty if user didn't keep typing during flight
             if (contentMdRef.current === mdToSave) {
+              dirtyRef.current = false;
               setDirty(false);
               setSaveStatus(saved.exists ? 'saved' : 'idle');
             }
-            setConflict(null);
+            updateConflict(null);
             void refreshGlobalMetadata(targetDate.slice(0, 7));
           }
           return saved;
@@ -205,7 +223,7 @@ export function App() {
           if (err instanceof ApiError && err.code === 'REVISION_CONFLICT') {
             const serverNote = err.details?.server_note as DailyNote | undefined;
             if (serverNote && currentDateRef.current === targetDate) {
-              setConflict({ serverNote, localMarkdown: contentMdRef.current });
+              updateConflict({ serverNote, localMarkdown: contentMdRef.current });
               setSaveStatus('error');
             }
             return null;
@@ -221,7 +239,7 @@ export function App() {
       savingPromiseRef.current = task;
       return task;
     },
-    [refreshGlobalMetadata, showToast],
+    [refreshGlobalMetadata, showToast, updateConflict, updateNote],
   );
 
   // Theme sync & initial workspace discovery
@@ -231,14 +249,15 @@ export function App() {
     return () => stopTheme();
   }, []);
 
-  // Load note whenever currentDate changes
   useEffect(() => {
-    void loadDate(currentDate);
-  }, [currentDate, loadDate]);
+    void loadInitialNote();
+  }, [loadInitialNote]);
 
   // Debounced autosave
   const handleMarkdownChange = useCallback(
     (nextMd: string) => {
+      contentMdRef.current = nextMd;
+      dirtyRef.current = true;
       setContentMd(nextMd);
       setDirty(true);
       setSaveStatus('dirty');
@@ -258,35 +277,64 @@ export function App() {
     [flushSave],
   );
 
-  // Navigate to another date, saving current changes first
   const navigateToDate = useCallback(
-    async (targetDate: string, { pushHistory = false } = {}) => {
-      if (!isValidDateStr(targetDate) || targetDate === currentDateRef.current) {
-        return;
+    async (targetDate: string, history: 'push' | 'pop' | 'none' = 'none') => {
+      const previousDate = currentDateRef.current;
+      if (!noteRef.current || !isValidDateStr(targetDate)) return;
+
+      const request = ++navigationRequestRef.current;
+      if (targetDate === previousDate) return;
+      const isCurrent = () => request === navigationRequestRef.current;
+      try {
+        // Keep the current note editable until the next note is ready and the current draft is saved.
+        const loaded = await fetchNote(targetDate);
+        while (isCurrent()) {
+          if (pendingImageUploads.current.size) {
+            await Promise.all(pendingImageUploads.current);
+          } else if (dirtyRef.current || savingPromiseRef.current) {
+            if (!(await flushSave(false))) return;
+          } else {
+            break;
+          }
+        }
+        if (!isCurrent()) return;
+
+        if (history === 'push') {
+          setHistoryStack((stack) => (stack[stack.length - 1] === previousDate ? stack : [...stack, previousDate]));
+        } else if (history === 'pop') {
+          setHistoryStack((stack) => stack.slice(0, -1));
+        }
+        currentDateRef.current = targetDate;
+        setCurrentDate(targetDate);
+        applyServerNote(loaded);
+        void refreshGlobalMetadata(targetDate.slice(0, 7));
+      } catch (err) {
+        if (isCurrent()) showToast(err instanceof Error ? err.message : '加载笔记失败');
       }
-      const saved = await flushSave(false);
-      if (dirtyRef.current && saved?.content_md !== contentMdRef.current) return;
-      if (pushHistory) {
-        const prev = currentDateRef.current;
-        setHistoryStack((stack) => (stack[stack.length - 1] === prev ? stack : [...stack, prev]));
-      }
-      setCurrentDate(targetDate);
     },
-    [flushSave],
+    [applyServerNote, flushSave, refreshGlobalMetadata, showToast],
   );
 
   const handleGoBack = useCallback(async () => {
-    if (historyStack.length === 0) return;
-    const prevDate = historyStack[historyStack.length - 1];
-    const saved = await flushSave(false);
-    if (dirtyRef.current && saved?.content_md !== contentMdRef.current) return;
-    setHistoryStack((stack) => stack.slice(0, -1));
-    setCurrentDate(prevDate);
-  }, [flushSave, historyStack]);
+    const previousDate = historyStack[historyStack.length - 1];
+    if (previousDate) await navigateToDate(previousDate, 'pop');
+  }, [historyStack, navigateToDate]);
+
+  const handleToggleSource = useCallback(async () => {
+    if (!noteRef.current) return;
+    const date = currentDateRef.current;
+    // Let uploads finish in the rich-text editor before replacing it with the source view.
+    do {
+      if (pendingImageUploads.current.size) await Promise.all(pendingImageUploads.current);
+      if (currentDateRef.current !== date) return;
+      await flushSave(false);
+    } while (pendingImageUploads.current.size);
+    if (currentDateRef.current === date) setSourceMode((value) => !value);
+  }, [flushSave]);
 
   // Poll /api/note/meta while visible, plus immediate check on window focus
   const checkExternalUpdates = useCallback(async () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible' || !noteRef.current || savingPromiseRef.current) return;
     const targetDate = currentDateRef.current;
     try {
       const meta = await fetchNoteMeta(targetDate);
@@ -294,9 +342,10 @@ export function App() {
       const localRev = noteRef.current?.revision ?? 0;
       if (meta.revision > localRev) {
         const latest = await fetchNote(targetDate);
-        if (currentDateRef.current !== targetDate) return;
+        if (currentDateRef.current !== targetDate || savingPromiseRef.current) return;
+        if (latest.revision <= (noteRef.current?.revision ?? 0)) return;
         if (dirtyRef.current) {
-          setConflict({ serverNote: latest, localMarkdown: contentMdRef.current });
+          updateConflict({ serverNote: latest, localMarkdown: contentMdRef.current });
         } else {
           applyServerNote(latest, { showAgentUndo: latest.last_editor === 'agent' });
           void refreshGlobalMetadata(targetDate.slice(0, 7));
@@ -305,7 +354,7 @@ export function App() {
     } catch {
       // ignore background poll errors
     }
-  }, [applyServerNote, refreshGlobalMetadata]);
+  }, [applyServerNote, refreshGlobalMetadata, updateConflict]);
 
   useEffect(() => {
     const intervalId = setInterval(() => {
@@ -391,10 +440,7 @@ export function App() {
 
       if (mod && e.key === '/') {
         e.preventDefault();
-        void (async () => {
-          await flushSave(false);
-          setSourceMode((v) => !v);
-        })();
+        void handleToggleSource();
         return;
       }
 
@@ -428,6 +474,7 @@ export function App() {
     calendarOpen,
     flushSave,
     handleGoBack,
+    handleToggleSource,
     historyStack.length,
     lightbox,
     navigateToDate,
@@ -437,11 +484,6 @@ export function App() {
   ]);
 
   // Actions
-  const handleToggleSource = async () => {
-    await flushSave(false);
-    setSourceMode((v) => !v);
-  };
-
   const handleAiSummary = async () => {
     await flushSave(false);
     const date = currentDateRef.current;
@@ -569,7 +611,7 @@ export function App() {
         workspace_uri: ws.uri,
         workspace_name: ws.name,
       });
-      setNote((prev) => (prev ? { ...prev, projects: res.projects } : prev));
+      if (noteRef.current?.date === date) updateNote({ ...noteRef.current, projects: res.projects });
       void refreshGlobalMetadata(date.slice(0, 7));
     } catch (err) {
       showToast(err instanceof Error ? err.message : '关联项目失败');
@@ -580,7 +622,7 @@ export function App() {
     const date = currentDateRef.current;
     try {
       const res = await removeNoteProject({ date, workspace_uri: workspaceUri });
-      setNote((prev) => (prev ? { ...prev, projects: res.projects } : prev));
+      if (noteRef.current?.date === date) updateNote({ ...noteRef.current, projects: res.projects });
       void refreshGlobalMetadata(date.slice(0, 7));
     } catch (err) {
       showToast(err instanceof Error ? err.message : '取消关联失败');
@@ -664,25 +706,37 @@ export function App() {
 
       <main className="dn-main">
         <div className="dn-content-col">
-          <NoteEditor
-            noteDate={currentDate}
-            contentMd={contentMd}
-            syncVersion={syncVersion}
-            sourceMode={sourceMode}
-            knownDates={knownDates}
-            recentNoteDates={recentNoteDates}
-            onChangeMarkdown={handleMarkdownChange}
-            onNavigateDate={(d) => void navigateToDate(d, { pushHistory: true })}
-            onClickTag={(tag) => {
-              setCalendarOpen(false);
-              setRevisionsOpen(false);
-              setSearchInitialTag(tag);
-              setSearchOpen(true);
-            }}
-            onSendSelectionToChat={(txt) => void handleSendSelectionToChat(txt)}
-            onOpenLightbox={(src, alt) => setLightbox({ src, alt })}
-            onNotify={showToast}
-          />
+          {note ? (
+            <NoteEditor
+              key={currentDate}
+              noteDate={currentDate}
+              contentMd={contentMd}
+              syncVersion={syncVersion}
+              sourceMode={sourceMode}
+              knownDates={knownDates}
+              recentNoteDates={recentNoteDates}
+              onChangeMarkdown={handleMarkdownChange}
+              onNavigateDate={(d) => void navigateToDate(d, 'push')}
+              onClickTag={(tag) => {
+                setCalendarOpen(false);
+                setRevisionsOpen(false);
+                setSearchInitialTag(tag);
+                setSearchOpen(true);
+              }}
+              onSendSelectionToChat={(txt) => void handleSendSelectionToChat(txt)}
+              onOpenLightbox={(src, alt) => setLightbox({ src, alt })}
+              onNotify={showToast}
+              onImageUploadStarted={trackImageUpload}
+            />
+          ) : (
+            <div role="status">
+              {initialLoadFailed ? (
+                <button type="button" className="dn-btn-sm" onClick={() => void loadInitialNote()}>
+                  重试加载笔记
+                </button>
+              ) : '正在加载笔记…'}
+            </div>
+          )}
 
           {note && note.backlinks.length > 0 && (
             <section className="dn-backlinks" aria-label="反向引用">
@@ -693,7 +747,7 @@ export function App() {
                     key={bl.date}
                     type="button"
                     className="dn-backlink-chip"
-                    onClick={() => void navigateToDate(bl.date, { pushHistory: true })}
+                    onClick={() => void navigateToDate(bl.date, 'push')}
                   >
                     <span>📅 {bl.date}</span>
                     {bl.title && <span>· {bl.title}</span>}
@@ -733,7 +787,7 @@ export function App() {
         tags={allTags}
         projects={allProjects}
         activeWorkspaces={activeWorkspaces}
-        onSelectDate={(d) => void navigateToDate(d, { pushHistory: true })}
+        onSelectDate={(d) => void navigateToDate(d, 'push')}
         onClose={() => setSearchOpen(false)}
       />
 

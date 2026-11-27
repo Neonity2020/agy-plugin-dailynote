@@ -1,6 +1,6 @@
 ---
 import Icon from './Icon.astro';
-import { ISSUES_URL } from '../config';
+import { ISSUES_URL, MIN_NODE } from '../config';
 
 const faqs = [
   {
@@ -13,7 +13,7 @@ const faqs = [
   },
   {
     q: '对 Node.js 版本有要求吗？',
-    a: '需要 22.5.0 及以上，因为核心依赖内置 node:sqlite。若本机版本过低，用 nvm 或 fnm 切到受支持版本再构建即可。',
+    a: `需要 Node.js ${MIN_NODE} 及以上。插件使用内置 node:sqlite，营销站使用 Astro 构建。可以用 nvm 或 fnm 切换 Node.js 版本。`,
   },
   {
     q: 'Agent 会覆盖我手写的内容吗？',
